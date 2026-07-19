@@ -119,6 +119,29 @@ function App() {
     };
 
     const existingByName = new Map(existingLocations.map((l) => [l.name.toLowerCase(), l]));
+    const labelsByName = new Map(existingLabels.map((l) => [l.name.toLowerCase(), l]));
+
+    async function resolveLabelIds(names: string[]): Promise<string[]> {
+      const ids: string[] = [];
+      for (const raw of names) {
+        const name = raw.trim();
+        if (!name) continue;
+        const key = name.toLowerCase();
+        let label = labelsByName.get(key);
+        if (!label && mapping.createMissingTags) {
+          try {
+            label = await client!.createLabel(name);
+            labelsByName.set(key, label);
+            log({ level: "ok", text: `  ~ Created tag "${name}"` });
+          } catch (e) {
+            log({ level: "error", text: `  ~ Tag "${name}" failed: ${(e as Error).message}` });
+            continue;
+          }
+        }
+        if (label) ids.push(label.id);
+      }
+      return ids;
+    }
 
     for (const tote of selectedTotes) {
       const toteVars = {
