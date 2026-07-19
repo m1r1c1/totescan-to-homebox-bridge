@@ -50,6 +50,7 @@ function App() {
   const [conn, setConn] = useState({ baseUrl: "", username: "", password: "", token: "" });
   const [client, setClient] = useState<HomeboxClient | null>(null);
   const [existingLocations, setExistingLocations] = useState<HomeboxLocation[]>([]);
+  const [existingLabels, setExistingLabels] = useState<HomeboxLabel[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [progress, setProgress] = useState(0);
   const [running, setRunning] = useState(false);
