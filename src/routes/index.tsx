@@ -178,16 +178,36 @@ function App() {
         const itemVars = { ...toteVars, name: item.name, itemNumber: item.itemNumber, quantity: item.quantity, description: item.description, upc: item.upc };
         const itemName = renderTemplate(mapping.itemName, itemVars).trim() || item.name;
         const itemDesc = renderTemplate(mapping.itemDescription, itemVars);
+        const itemNotes = mapping.itemNotes ? renderTemplate(mapping.itemNotes, itemVars) : "";
+        const qtyStr = mapping.itemQuantity ? renderTemplate(mapping.itemQuantity, itemVars).trim() : "";
+        const qtyNum = qtyStr ? parseInt(qtyStr, 10) : item.quantity;
+        const quantity = Number.isFinite(qtyNum) && qtyNum > 0 ? qtyNum : item.quantity;
         const assetId = mapping.itemAssetId ? renderTemplate(mapping.itemAssetId, itemVars).trim() : undefined;
+        const tagNames = mapping.itemTags
+          ? renderTemplate(mapping.itemTags, itemVars).split(",").map((s) => s.trim()).filter(Boolean)
+          : [];
         try {
+          const labelIds = tagNames.length > 0 ? await resolveLabelIds(tagNames) : [];
           const created = await client.createItem({
             name: itemName,
             description: itemDesc,
             locationId,
-            quantity: item.quantity,
+            quantity,
             assetId: assetId || undefined,
+            labelIds: labelIds.length > 0 ? labelIds : undefined,
           });
-          log({ level: "ok", text: `  + Item "${itemName}"` });
+          if (itemNotes || labelIds.length > 0 || quantity !== 1) {
+            try {
+              await client.updateItem(created.id, {
+                notes: itemNotes || undefined,
+                quantity,
+                labelIds: labelIds.length > 0 ? labelIds : undefined,
+              });
+            } catch (e) {
+              log({ level: "error", text: `  ! Item "${itemName}" details update failed: ${(e as Error).message}` });
+            }
+          }
+          log({ level: "ok", text: `  + Item "${itemName}"${labelIds.length ? ` [${tagNames.join(", ")}]` : ""}` });
           if (mapping.uploadImages && item.imageUrls.length > 0) {
             for (const url of item.imageUrls) {
               try {
@@ -205,6 +225,7 @@ function App() {
         }
         bumpProgress();
       }
+
     }
 
     setProgress(100);
