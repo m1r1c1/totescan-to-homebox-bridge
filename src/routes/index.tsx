@@ -444,7 +444,7 @@ function StepMapping({
   onNext: () => void;
 }) {
   const sampleItem = sampleTote?.items[0];
-  const toteVars = sampleTote
+  const toteVars: Record<string, string | number> = sampleTote
     ? {
         toteId: sampleTote.toteId,
         title: sampleTote.title,
@@ -454,7 +454,9 @@ function StepMapping({
         dateUpdated: sampleTote.dateUpdated,
       }
     : {};
-  const itemVars = sampleItem ? { ...toteVars, name: sampleItem.name, itemNumber: sampleItem.itemNumber, quantity: sampleItem.quantity, description: sampleItem.description, upc: sampleItem.upc } : toteVars;
+  const itemVars: Record<string, string | number> = sampleItem
+    ? { ...toteVars, name: sampleItem.name, itemNumber: sampleItem.itemNumber, quantity: sampleItem.quantity, description: sampleItem.description, upc: sampleItem.upc }
+    : toteVars;
 
   const update = <K extends keyof MappingConfig>(k: K, v: MappingConfig[K]) => setMapping({ ...mapping, [k]: v });
 
