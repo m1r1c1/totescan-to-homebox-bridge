@@ -77,14 +77,21 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
-      { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { title: "Totescan → Homebox Migrator" },
+      {
+        name: "description",
+        content:
+          "Self-hosted tool that converts Totescan MHTML exports into Homebox locations, items, and photos via the Homebox API.",
+      },
+      { name: "author", content: "Totescan → Homebox Migrator" },
+      { property: "og:title", content: "Totescan → Homebox Migrator" },
+      {
+        property: "og:description",
+        content:
+          "Self-hosted tool that converts Totescan MHTML exports into Homebox locations, items, and photos via the Homebox API.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:site", content: "@Lovable" },
     ],
     links: [
       {
