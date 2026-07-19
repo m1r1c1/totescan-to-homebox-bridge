@@ -542,14 +542,25 @@ function StepMapping({
           <VarChips vars={ITEM_VARIABLES} />
           <MappingField label="Item name" value={mapping.itemName} onChange={(v) => update("itemName", v)} preview={renderTemplate(mapping.itemName, itemVars)} />
           <MappingField label="Item description" value={mapping.itemDescription} onChange={(v) => update("itemDescription", v)} preview={renderTemplate(mapping.itemDescription, itemVars)} multiline />
+          <MappingField label="Item notes" value={mapping.itemNotes} onChange={(v) => update("itemNotes", v)} preview={renderTemplate(mapping.itemNotes, itemVars)} placeholder="e.g. UPC: {upc}" multiline />
+          <MappingField label="Quantity" value={mapping.itemQuantity} onChange={(v) => update("itemQuantity", v)} preview={renderTemplate(mapping.itemQuantity, itemVars)} placeholder="{quantity}" />
+          <MappingField label="Tags (comma-separated)" value={mapping.itemTags} onChange={(v) => update("itemTags", v)} preview={renderTemplate(mapping.itemTags, itemVars)} placeholder="e.g. {profile}, {title}" />
           <MappingField label="Asset ID (optional)" value={mapping.itemAssetId} onChange={(v) => update("itemAssetId", v)} preview={renderTemplate(mapping.itemAssetId, itemVars)} placeholder="e.g. {toteId}-{itemNumber}" />
           <div className="mt-4 flex items-center justify-between rounded-md border border-border/60 p-3">
+            <div>
+              <p className="text-sm font-medium">Create missing tags</p>
+              <p className="text-xs text-muted-foreground">Auto-create Homebox labels that don't yet exist.</p>
+            </div>
+            <Switch checked={mapping.createMissingTags} onCheckedChange={(v) => update("createMissingTags", v)} />
+          </div>
+          <div className="mt-3 flex items-center justify-between rounded-md border border-border/60 p-3">
             <div>
               <p className="text-sm font-medium">Upload item photos</p>
               <p className="text-xs text-muted-foreground">Fetches images from Totescan's S3 and attaches to each item.</p>
             </div>
             <Switch checked={mapping.uploadImages} onCheckedChange={(v) => update("uploadImages", v)} />
           </div>
+
         </section>
       </div>
 
