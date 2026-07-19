@@ -12,7 +12,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import { parseTotescanFile, renderTemplate, type ParsedTote } from "@/lib/mhtml";
-import { HomeboxClient, fetchImageAsBlob, type HomeboxLocation } from "@/lib/homebox";
+import { HomeboxClient, fetchImageAsBlob, type HomeboxLocation, type HomeboxLabel } from "@/lib/homebox";
 import { DEFAULT_MAPPING, TOTE_VARIABLES, ITEM_VARIABLES, type MappingConfig } from "@/lib/mapping";
 
 export const Route = createFileRoute("/")({
@@ -50,6 +50,7 @@ function App() {
   const [conn, setConn] = useState({ baseUrl: "", username: "", password: "", token: "" });
   const [client, setClient] = useState<HomeboxClient | null>(null);
   const [existingLocations, setExistingLocations] = useState<HomeboxLocation[]>([]);
+  const [existingLabels, setExistingLabels] = useState<HomeboxLabel[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [progress, setProgress] = useState(0);
   const [running, setRunning] = useState(false);
@@ -89,10 +90,11 @@ function App() {
       } else {
         await c.login(conn.username, conn.password);
       }
-      const locs = await c.listLocations();
+      const [locs, labels] = await Promise.all([c.listLocations(), c.listLabels().catch(() => [])]);
       setClient(c);
       setExistingLocations(locs);
-      toast.success(`Connected. Found ${locs.length} existing locations.`);
+      setExistingLabels(labels);
+      toast.success(`Connected. Found ${locs.length} locations, ${labels.length} labels.`);
     } catch (e) {
       toast.error(`Connection failed: ${(e as Error).message}. Check the URL, credentials, and CORS on your Homebox instance.`);
     }
@@ -117,6 +119,29 @@ function App() {
     };
 
     const existingByName = new Map(existingLocations.map((l) => [l.name.toLowerCase(), l]));
+    const labelsByName = new Map(existingLabels.map((l) => [l.name.toLowerCase(), l]));
+
+    async function resolveLabelIds(names: string[]): Promise<string[]> {
+      const ids: string[] = [];
+      for (const raw of names) {
+        const name = raw.trim();
+        if (!name) continue;
+        const key = name.toLowerCase();
+        let label = labelsByName.get(key);
+        if (!label && mapping.createMissingTags) {
+          try {
+            label = await client!.createLabel(name);
+            labelsByName.set(key, label);
+            log({ level: "ok", text: `  ~ Created tag "${name}"` });
+          } catch (e) {
+            log({ level: "error", text: `  ~ Tag "${name}" failed: ${(e as Error).message}` });
+            continue;
+          }
+        }
+        if (label) ids.push(label.id);
+      }
+      return ids;
+    }
 
     for (const tote of selectedTotes) {
       const toteVars = {
@@ -153,16 +178,36 @@ function App() {
         const itemVars = { ...toteVars, name: item.name, itemNumber: item.itemNumber, quantity: item.quantity, description: item.description, upc: item.upc };
         const itemName = renderTemplate(mapping.itemName, itemVars).trim() || item.name;
         const itemDesc = renderTemplate(mapping.itemDescription, itemVars);
+        const itemNotes = mapping.itemNotes ? renderTemplate(mapping.itemNotes, itemVars) : "";
+        const qtyStr = mapping.itemQuantity ? renderTemplate(mapping.itemQuantity, itemVars).trim() : "";
+        const qtyNum = qtyStr ? parseInt(qtyStr, 10) : item.quantity;
+        const quantity = Number.isFinite(qtyNum) && qtyNum > 0 ? qtyNum : item.quantity;
         const assetId = mapping.itemAssetId ? renderTemplate(mapping.itemAssetId, itemVars).trim() : undefined;
+        const tagNames = mapping.itemTags
+          ? renderTemplate(mapping.itemTags, itemVars).split(",").map((s) => s.trim()).filter(Boolean)
+          : [];
         try {
+          const labelIds = tagNames.length > 0 ? await resolveLabelIds(tagNames) : [];
           const created = await client.createItem({
             name: itemName,
             description: itemDesc,
             locationId,
-            quantity: item.quantity,
+            quantity,
             assetId: assetId || undefined,
+            labelIds: labelIds.length > 0 ? labelIds : undefined,
           });
-          log({ level: "ok", text: `  + Item "${itemName}"` });
+          if (itemNotes || labelIds.length > 0 || quantity !== 1) {
+            try {
+              await client.updateItem(created.id, {
+                notes: itemNotes || undefined,
+                quantity,
+                labelIds: labelIds.length > 0 ? labelIds : undefined,
+              });
+            } catch (e) {
+              log({ level: "error", text: `  ! Item "${itemName}" details update failed: ${(e as Error).message}` });
+            }
+          }
+          log({ level: "ok", text: `  + Item "${itemName}"${labelIds.length ? ` [${tagNames.join(", ")}]` : ""}` });
           if (mapping.uploadImages && item.imageUrls.length > 0) {
             for (const url of item.imageUrls) {
               try {
@@ -180,6 +225,7 @@ function App() {
         }
         bumpProgress();
       }
+
     }
 
     setProgress(100);
@@ -496,14 +542,25 @@ function StepMapping({
           <VarChips vars={ITEM_VARIABLES} />
           <MappingField label="Item name" value={mapping.itemName} onChange={(v) => update("itemName", v)} preview={renderTemplate(mapping.itemName, itemVars)} />
           <MappingField label="Item description" value={mapping.itemDescription} onChange={(v) => update("itemDescription", v)} preview={renderTemplate(mapping.itemDescription, itemVars)} multiline />
+          <MappingField label="Item notes" value={mapping.itemNotes} onChange={(v) => update("itemNotes", v)} preview={renderTemplate(mapping.itemNotes, itemVars)} placeholder="e.g. UPC: {upc}" multiline />
+          <MappingField label="Quantity" value={mapping.itemQuantity} onChange={(v) => update("itemQuantity", v)} preview={renderTemplate(mapping.itemQuantity, itemVars)} placeholder="{quantity}" />
+          <MappingField label="Tags (comma-separated)" value={mapping.itemTags} onChange={(v) => update("itemTags", v)} preview={renderTemplate(mapping.itemTags, itemVars)} placeholder="e.g. {profile}, {title}" />
           <MappingField label="Asset ID (optional)" value={mapping.itemAssetId} onChange={(v) => update("itemAssetId", v)} preview={renderTemplate(mapping.itemAssetId, itemVars)} placeholder="e.g. {toteId}-{itemNumber}" />
           <div className="mt-4 flex items-center justify-between rounded-md border border-border/60 p-3">
+            <div>
+              <p className="text-sm font-medium">Create missing tags</p>
+              <p className="text-xs text-muted-foreground">Auto-create Homebox labels that don't yet exist.</p>
+            </div>
+            <Switch checked={mapping.createMissingTags} onCheckedChange={(v) => update("createMissingTags", v)} />
+          </div>
+          <div className="mt-3 flex items-center justify-between rounded-md border border-border/60 p-3">
             <div>
               <p className="text-sm font-medium">Upload item photos</p>
               <p className="text-xs text-muted-foreground">Fetches images from Totescan's S3 and attaches to each item.</p>
             </div>
             <Switch checked={mapping.uploadImages} onCheckedChange={(v) => update("uploadImages", v)} />
           </div>
+
         </section>
       </div>
 

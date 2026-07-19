@@ -13,6 +13,12 @@ export interface HomeboxLocation {
   description?: string;
 }
 
+export interface HomeboxLabel {
+  id: string;
+  name: string;
+  description?: string;
+}
+
 export interface HomeboxItem {
   id: string;
   name: string;
@@ -72,6 +78,7 @@ export class HomeboxClient {
     locationId: string;
     quantity?: number;
     assetId?: string;
+    labelIds?: string[];
   }): Promise<HomeboxItem> {
     const body: Record<string, unknown> = {
       name: payload.name,
@@ -80,6 +87,7 @@ export class HomeboxClient {
       quantity: payload.quantity ?? 1,
     };
     if (payload.assetId) body.assetId = payload.assetId;
+    if (payload.labelIds && payload.labelIds.length > 0) body.labelIds = payload.labelIds;
     const r = await fetch(`${this.baseUrl}/api/v1/items`, {
       method: "POST",
       headers: this.authHeaders({ "Content-Type": "application/json" }),
@@ -88,6 +96,53 @@ export class HomeboxClient {
     if (!r.ok) throw new Error(`Create item failed: ${r.status} ${await safeText(r)}`);
     return (await r.json()) as HomeboxItem;
   }
+
+  async updateItem(itemId: string, patch: {
+    name?: string;
+    description?: string;
+    notes?: string;
+    quantity?: number;
+    locationId?: string;
+    assetId?: string;
+    labelIds?: string[];
+  }): Promise<void> {
+    // Homebox PUT expects a full item shape; fetch current then merge.
+    const cur = await fetch(`${this.baseUrl}/api/v1/items/${itemId}`, { headers: this.authHeaders() });
+    if (!cur.ok) throw new Error(`Fetch item failed: ${cur.status}`);
+    const current = await cur.json();
+    const body: Record<string, unknown> = {
+      ...current,
+      ...patch,
+      locationId: patch.locationId ?? current?.location?.id ?? current?.locationId,
+      labelIds: patch.labelIds ?? (Array.isArray(current?.labels) ? current.labels.map((l: { id: string }) => l.id) : []),
+    };
+    const r = await fetch(`${this.baseUrl}/api/v1/items/${itemId}`, {
+      method: "PUT",
+      headers: this.authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(`Update item failed: ${r.status} ${await safeText(r)}`);
+  }
+
+  async listLabels(): Promise<HomeboxLabel[]> {
+    const r = await fetch(`${this.baseUrl}/api/v1/labels`, { headers: this.authHeaders() });
+    if (!r.ok) throw new Error(`List labels failed: ${r.status}`);
+    const body = await r.json();
+    if (Array.isArray(body)) return body;
+    if (Array.isArray(body?.items)) return body.items;
+    return [];
+  }
+
+  async createLabel(name: string, description = ""): Promise<HomeboxLabel> {
+    const r = await fetch(`${this.baseUrl}/api/v1/labels`, {
+      method: "POST",
+      headers: this.authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ name, description, color: "" }),
+    });
+    if (!r.ok) throw new Error(`Create label failed: ${r.status} ${await safeText(r)}`);
+    return (await r.json()) as HomeboxLabel;
+  }
+
 
   async uploadAttachment(itemId: string, blob: Blob, filename: string, type = "photo"): Promise<void> {
     const form = new FormData();
