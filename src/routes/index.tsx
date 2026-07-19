@@ -1,24 +1,681 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
+import { Upload, Package, ArrowRight, ArrowLeft, CheckCircle2, XCircle, Loader2, Boxes, FileText, Settings2, Send, Image as ImageIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Progress } from "@/components/ui/progress";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { toast } from "sonner";
+import { Toaster } from "@/components/ui/sonner";
+import { parseTotescanFile, renderTemplate, type ParsedTote } from "@/lib/mhtml";
+import { HomeboxClient, fetchImageAsBlob, type HomeboxLocation } from "@/lib/homebox";
+import { DEFAULT_MAPPING, TOTE_VARIABLES, ITEM_VARIABLES, type MappingConfig } from "@/lib/mapping";
 
-// No head() here: the home route inherits title/description/og/twitter from
-// __root.tsx, and ships no og:image so serve-time hosting can inject the
-// project's social preview (explicit og:image or latest screenshot).
 export const Route = createFileRoute("/")({
-  component: Index,
+  head: () => ({
+    meta: [
+      { title: "Totescan → Homebox Migrator" },
+      {
+        name: "description",
+        content:
+          "Convert Totescan MHTML exports into Homebox locations, items, and photos via the Homebox API. Self-hostable, browser-based.",
+      },
+      { property: "og:title", content: "Totescan → Homebox Migrator" },
+      {
+        property: "og:description",
+        content:
+          "Convert Totescan MHTML exports into Homebox locations, items, and photos via the Homebox API.",
+      },
+    ],
+  }),
+  component: App,
 });
 
-// IMPORTANT: Replace this placeholder. See ./README.md for routing conventions.
-function Index() {
+type Step = 1 | 2 | 3 | 4;
+
+interface LogEntry {
+  level: "info" | "ok" | "error";
+  text: string;
+}
+
+function App() {
+  const [step, setStep] = useState<Step>(1);
+  const [totes, setTotes] = useState<ParsedTote[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [mapping, setMapping] = useState<MappingConfig>(DEFAULT_MAPPING);
+  const [conn, setConn] = useState({ baseUrl: "", username: "", password: "", token: "" });
+  const [client, setClient] = useState<HomeboxClient | null>(null);
+  const [existingLocations, setExistingLocations] = useState<HomeboxLocation[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [progress, setProgress] = useState(0);
+  const [running, setRunning] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const selectedTotes = useMemo(
+    () => totes.filter((t) => selectedIds.has(t.toteId)),
+    [totes, selectedIds],
+  );
+  const totalItems = useMemo(
+    () => selectedTotes.reduce((n, t) => n + t.items.length, 0),
+    [selectedTotes],
+  );
+
+  async function handleFile(file: File) {
+    try {
+      const parsed = await parseTotescanFile(file);
+      if (parsed.length === 0) {
+        toast.error("No totes found in that file. Is it a Totescan MHTML export?");
+        return;
+      }
+      setTotes(parsed);
+      setSelectedIds(new Set(parsed.map((t) => t.toteId)));
+      setStep(2);
+      toast.success(`Parsed ${parsed.length} totes with ${parsed.reduce((n, t) => n + t.items.length, 0)} items.`);
+    } catch (e) {
+      toast.error(`Failed to parse: ${(e as Error).message}`);
+    }
+  }
+
+  async function handleConnect() {
+    if (!conn.baseUrl) return toast.error("Homebox URL is required.");
+    const c = new HomeboxClient(conn.baseUrl);
+    try {
+      if (conn.token) {
+        c.token = conn.token;
+      } else {
+        await c.login(conn.username, conn.password);
+      }
+      const locs = await c.listLocations();
+      setClient(c);
+      setExistingLocations(locs);
+      toast.success(`Connected. Found ${locs.length} existing locations.`);
+    } catch (e) {
+      toast.error(`Connection failed: ${(e as Error).message}. Check the URL, credentials, and CORS on your Homebox instance.`);
+    }
+  }
+
+  function log(entry: LogEntry) {
+    setLogs((prev) => [...prev, entry]);
+  }
+
+  async function runImport() {
+    if (!client) return;
+    setRunning(true);
+    setDone(false);
+    setLogs([]);
+    setProgress(0);
+
+    const totalSteps = selectedTotes.length + totalItems;
+    let stepDone = 0;
+    const bumpProgress = () => {
+      stepDone += 1;
+      setProgress(Math.round((stepDone / totalSteps) * 100));
+    };
+
+    const existingByName = new Map(existingLocations.map((l) => [l.name.toLowerCase(), l]));
+
+    for (const tote of selectedTotes) {
+      const toteVars = {
+        toteId: tote.toteId,
+        title: tote.title,
+        location: tote.location,
+        profile: tote.profile,
+        parentToteId: tote.parentToteId,
+        dateUpdated: tote.dateUpdated,
+      };
+      const locName = renderTemplate(mapping.locationName, toteVars).trim() || tote.title || tote.toteId;
+      const locDesc = renderTemplate(mapping.locationDescription, toteVars);
+
+      let locationId: string;
+      try {
+        const existing = mapping.useExistingLocations ? existingByName.get(locName.toLowerCase()) : undefined;
+        if (existing) {
+          locationId = existing.id;
+          log({ level: "info", text: `Using existing location "${locName}"` });
+        } else {
+          const created = await client.createLocation(locName, locDesc);
+          locationId = created.id;
+          existingByName.set(locName.toLowerCase(), created);
+          log({ level: "ok", text: `Created location "${locName}"` });
+        }
+      } catch (e) {
+        log({ level: "error", text: `Location "${locName}" failed: ${(e as Error).message}` });
+        bumpProgress();
+        continue;
+      }
+      bumpProgress();
+
+      for (const item of tote.items) {
+        const itemVars = { ...toteVars, name: item.name, itemNumber: item.itemNumber, quantity: item.quantity, description: item.description, upc: item.upc };
+        const itemName = renderTemplate(mapping.itemName, itemVars).trim() || item.name;
+        const itemDesc = renderTemplate(mapping.itemDescription, itemVars);
+        const assetId = mapping.itemAssetId ? renderTemplate(mapping.itemAssetId, itemVars).trim() : undefined;
+        try {
+          const created = await client.createItem({
+            name: itemName,
+            description: itemDesc,
+            locationId,
+            quantity: item.quantity,
+            assetId: assetId || undefined,
+          });
+          log({ level: "ok", text: `  + Item "${itemName}"` });
+          if (mapping.uploadImages && item.imageUrls.length > 0) {
+            for (const url of item.imageUrls) {
+              try {
+                const blob = await fetchImageAsBlob(url);
+                const filename = url.split("/").pop()?.split("?")[0] ?? "photo.jpg";
+                await client.uploadAttachment(created.id, blob, filename);
+                log({ level: "ok", text: `      photo ${filename}` });
+              } catch (e) {
+                log({ level: "error", text: `      photo failed (${url}): ${(e as Error).message}` });
+              }
+            }
+          }
+        } catch (e) {
+          log({ level: "error", text: `  ! Item "${itemName}" failed: ${(e as Error).message}` });
+        }
+        bumpProgress();
+      }
+    }
+
+    setProgress(100);
+    setRunning(false);
+    setDone(true);
+    toast.success("Import complete.");
+  }
+
   return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
+    <div className="min-h-screen bg-background text-foreground">
+      <Toaster theme="dark" richColors closeButton />
+      <header className="border-b border-border">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
+              <Boxes className="h-5 w-5" />
+            </div>
+            <div>
+              <h1 className="text-lg font-semibold tracking-tight">Totescan → Homebox</h1>
+              <p className="text-xs text-muted-foreground">Migrate MHTML exports into your self-hosted inventory</p>
+            </div>
+          </div>
+          <StepIndicator step={step} />
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-6xl px-6 py-10">
+        {step === 1 && <StepUpload onFile={handleFile} />}
+        {step === 2 && (
+          <StepReview
+            totes={totes}
+            selectedIds={selectedIds}
+            setSelectedIds={setSelectedIds}
+            onBack={() => setStep(1)}
+            onNext={() => setStep(3)}
+          />
+        )}
+        {step === 3 && (
+          <StepMapping
+            mapping={mapping}
+            setMapping={setMapping}
+            sampleTote={selectedTotes[0] ?? totes[0]}
+            onBack={() => setStep(2)}
+            onNext={() => setStep(4)}
+          />
+        )}
+        {step === 4 && (
+          <StepImport
+            conn={conn}
+            setConn={setConn}
+            client={client}
+            handleConnect={handleConnect}
+            existingLocations={existingLocations}
+            totalTotes={selectedTotes.length}
+            totalItems={totalItems}
+            logs={logs}
+            progress={progress}
+            running={running}
+            done={done}
+            onBack={() => setStep(3)}
+            onRun={runImport}
+          />
+        )}
+      </main>
+    </div>
+  );
+}
+
+function StepIndicator({ step }: { step: Step }) {
+  const items = [
+    { n: 1, label: "Upload" },
+    { n: 2, label: "Review" },
+    { n: 3, label: "Mapping" },
+    { n: 4, label: "Import" },
+  ];
+  return (
+    <ol className="hidden items-center gap-2 md:flex">
+      {items.map((it, i) => {
+        const active = step === it.n;
+        const complete = step > it.n;
+        return (
+          <li key={it.n} className="flex items-center gap-2">
+            <div
+              className={`flex h-7 w-7 items-center justify-center rounded-full border text-xs font-medium ${
+                active
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : complete
+                    ? "border-primary/60 bg-primary/20 text-primary"
+                    : "border-border bg-secondary text-muted-foreground"
+              }`}
+            >
+              {complete ? <CheckCircle2 className="h-4 w-4" /> : it.n}
+            </div>
+            <span className={`text-sm ${active ? "text-foreground" : "text-muted-foreground"}`}>{it.label}</span>
+            {i < items.length - 1 && <div className="mx-1 h-px w-6 bg-border" />}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function StepUpload({ onFile }: { onFile: (f: File) => void }) {
+  const [dragging, setDragging] = useState(false);
+  return (
+    <div className="mx-auto max-w-3xl">
+      <div className="mb-8 text-center">
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-primary/15 text-primary">
+          <FileText className="h-7 w-7" />
+        </div>
+        <h2 className="text-3xl font-semibold tracking-tight">Upload your Totescan export</h2>
+        <p className="mt-2 text-muted-foreground">
+          Drop the <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">.mhtml</span> or{" "}
+          <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">.html</span> file you exported from Totescan.
+          Everything is parsed in your browser — nothing is sent anywhere until you run the import.
+        </p>
+      </div>
+
+      <label
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          const f = e.dataTransfer.files?.[0];
+          if (f) onFile(f);
+        }}
+        className={`flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed p-12 transition-colors ${
+          dragging ? "border-primary bg-primary/5" : "border-border bg-card/50 hover:border-primary/60"
+        }`}
+      >
+        <Upload className="h-10 w-10 text-muted-foreground" />
+        <p className="mt-4 font-medium">Click to choose or drag & drop</p>
+        <p className="mt-1 text-sm text-muted-foreground">.mhtml, .mht, or .html</p>
+        <input
+          type="file"
+          accept=".mhtml,.mht,.html,.htm,message/rfc822"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) onFile(f);
+          }}
+        />
+      </label>
+    </div>
+  );
+}
+
+function StepReview({
+  totes,
+  selectedIds,
+  setSelectedIds,
+  onBack,
+  onNext,
+}: {
+  totes: ParsedTote[];
+  selectedIds: Set<string>;
+  setSelectedIds: (s: Set<string>) => void;
+  onBack: () => void;
+  onNext: () => void;
+}) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const toggle = (id: string) => {
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedIds(next);
+  };
+  const allOn = selectedIds.size === totes.length;
+
+  return (
+    <div>
+      <div className="mb-6 flex items-end justify-between">
+        <div>
+          <h2 className="text-2xl font-semibold tracking-tight">Review parsed totes</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {totes.length} totes · {totes.reduce((n, t) => n + t.items.length, 0)} items · {selectedIds.size} selected
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setSelectedIds(allOn ? new Set() : new Set(totes.map((t) => t.toteId)))}
+        >
+          {allOn ? "Deselect all" : "Select all"}
+        </Button>
+      </div>
+
+      <div className="space-y-3">
+        {totes.map((t) => {
+          const on = selectedIds.has(t.toteId);
+          const isOpen = expanded === t.toteId;
+          return (
+            <div key={t.toteId} className="rounded-lg border border-border bg-card">
+              <div className="flex items-center gap-3 p-4">
+                <Switch checked={on} onCheckedChange={() => toggle(t.toteId)} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs text-primary">{t.toteId}</span>
+                    <h3 className="truncate font-medium">{t.title || "(untitled)"}</h3>
+                    <Badge variant="secondary" className="ml-auto">
+                      {t.items.length} items
+                    </Badge>
+                  </div>
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                    {t.location} · {t.profile}
+                  </p>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => setExpanded(isOpen ? null : t.toteId)}>
+                  {isOpen ? "Hide" : "Preview"}
+                </Button>
+              </div>
+              {isOpen && (
+                <div className="border-t border-border bg-background/50 p-4">
+                  <ul className="space-y-2">
+                    {t.items.map((item) => (
+                      <li key={item.itemNumber} className="rounded-md border border-border/60 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-medium">{item.name}</p>
+                            <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{item.description}</p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                            <span>Qty {item.quantity}</span>
+                            {item.imageUrls.length > 0 && (
+                              <span className="flex items-center gap-1">
+                                <ImageIcon className="h-3 w-3" />
+                                {item.imageUrls.length}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <NavButtons onBack={onBack} onNext={onNext} nextDisabled={selectedIds.size === 0} nextLabel="Configure mapping" />
+    </div>
+  );
+}
+
+function StepMapping({
+  mapping,
+  setMapping,
+  sampleTote,
+  onBack,
+  onNext,
+}: {
+  mapping: MappingConfig;
+  setMapping: (m: MappingConfig) => void;
+  sampleTote: ParsedTote | undefined;
+  onBack: () => void;
+  onNext: () => void;
+}) {
+  const sampleItem = sampleTote?.items[0];
+  const toteVars = sampleTote
+    ? {
+        toteId: sampleTote.toteId,
+        title: sampleTote.title,
+        location: sampleTote.location,
+        profile: sampleTote.profile,
+        parentToteId: sampleTote.parentToteId,
+        dateUpdated: sampleTote.dateUpdated,
+      }
+    : {};
+  const itemVars = sampleItem ? { ...toteVars, name: sampleItem.name, itemNumber: sampleItem.itemNumber, quantity: sampleItem.quantity, description: sampleItem.description, upc: sampleItem.upc } : toteVars;
+
+  const update = <K extends keyof MappingConfig>(k: K, v: MappingConfig[K]) => setMapping({ ...mapping, [k]: v });
+
+  return (
+    <div>
+      <div className="mb-6 flex items-center gap-3">
+        <Settings2 className="h-6 w-6 text-primary" />
+        <div>
+          <h2 className="text-2xl font-semibold tracking-tight">Field mapping</h2>
+          <p className="text-sm text-muted-foreground">
+            Templates use <code className="rounded bg-muted px-1 text-xs">{"{variable}"}</code> placeholders. Preview updates live.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <section className="rounded-lg border border-border bg-card p-5">
+          <h3 className="mb-4 flex items-center gap-2 font-semibold">
+            <Package className="h-4 w-4 text-primary" /> Location (from each Tote)
+          </h3>
+          <VarChips vars={TOTE_VARIABLES} />
+          <MappingField label="Location name" value={mapping.locationName} onChange={(v) => update("locationName", v)} preview={renderTemplate(mapping.locationName, toteVars)} />
+          <MappingField label="Location description" value={mapping.locationDescription} onChange={(v) => update("locationDescription", v)} preview={renderTemplate(mapping.locationDescription, toteVars)} multiline />
+          <div className="mt-4 flex items-center justify-between rounded-md border border-border/60 p-3">
+            <div>
+              <p className="text-sm font-medium">Reuse existing locations</p>
+              <p className="text-xs text-muted-foreground">Match Homebox locations by name instead of creating duplicates.</p>
+            </div>
+            <Switch checked={mapping.useExistingLocations} onCheckedChange={(v) => update("useExistingLocations", v)} />
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-border bg-card p-5">
+          <h3 className="mb-4 flex items-center gap-2 font-semibold">
+            <FileText className="h-4 w-4 text-primary" /> Items
+          </h3>
+          <VarChips vars={ITEM_VARIABLES} />
+          <MappingField label="Item name" value={mapping.itemName} onChange={(v) => update("itemName", v)} preview={renderTemplate(mapping.itemName, itemVars)} />
+          <MappingField label="Item description" value={mapping.itemDescription} onChange={(v) => update("itemDescription", v)} preview={renderTemplate(mapping.itemDescription, itemVars)} multiline />
+          <MappingField label="Asset ID (optional)" value={mapping.itemAssetId} onChange={(v) => update("itemAssetId", v)} preview={renderTemplate(mapping.itemAssetId, itemVars)} placeholder="e.g. {toteId}-{itemNumber}" />
+          <div className="mt-4 flex items-center justify-between rounded-md border border-border/60 p-3">
+            <div>
+              <p className="text-sm font-medium">Upload item photos</p>
+              <p className="text-xs text-muted-foreground">Fetches images from Totescan's S3 and attaches to each item.</p>
+            </div>
+            <Switch checked={mapping.uploadImages} onCheckedChange={(v) => update("uploadImages", v)} />
+          </div>
+        </section>
+      </div>
+
+      <NavButtons onBack={onBack} onNext={onNext} nextLabel="Connect Homebox" />
+    </div>
+  );
+}
+
+function VarChips({ vars }: { vars: string[] }) {
+  return (
+    <div className="mb-3 flex flex-wrap gap-1.5">
+      {vars.map((v) => (
+        <code key={v} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+          {`{${v}}`}
+        </code>
+      ))}
+    </div>
+  );
+}
+
+function MappingField({
+  label,
+  value,
+  onChange,
+  preview,
+  multiline,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  preview: string;
+  multiline?: boolean;
+  placeholder?: string;
+}) {
+  return (
+    <div className="mb-4">
+      <Label className="mb-1.5 block text-xs uppercase tracking-wide text-muted-foreground">{label}</Label>
+      {multiline ? (
+        <Textarea value={value} onChange={(e) => onChange(e.target.value)} rows={3} placeholder={placeholder} className="font-mono text-sm" />
+      ) : (
+        <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="font-mono text-sm" />
+      )}
+      {preview && (
+        <div className="mt-1.5 rounded border border-border/50 bg-background px-2 py-1.5 text-xs text-muted-foreground">
+          <span className="mr-1 text-[10px] uppercase tracking-wider text-primary">preview</span>
+          <span className="whitespace-pre-wrap">{preview}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StepImport({
+  conn,
+  setConn,
+  client,
+  handleConnect,
+  existingLocations,
+  totalTotes,
+  totalItems,
+  logs,
+  progress,
+  running,
+  done,
+  onBack,
+  onRun,
+}: {
+  conn: { baseUrl: string; username: string; password: string; token: string };
+  setConn: (c: { baseUrl: string; username: string; password: string; token: string }) => void;
+  client: HomeboxClient | null;
+  handleConnect: () => void;
+  existingLocations: HomeboxLocation[];
+  totalTotes: number;
+  totalItems: number;
+  logs: LogEntry[];
+  progress: number;
+  running: boolean;
+  done: boolean;
+  onBack: () => void;
+  onRun: () => void;
+}) {
+  return (
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+      <section className="rounded-lg border border-border bg-card p-5">
+        <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold">
+          <Send className="h-5 w-5 text-primary" /> Homebox connection
+        </h2>
+        <div className="space-y-3">
+          <div>
+            <Label className="mb-1.5 block text-xs uppercase tracking-wide text-muted-foreground">Homebox URL</Label>
+            <Input placeholder="https://homebox.local" value={conn.baseUrl} onChange={(e) => setConn({ ...conn, baseUrl: e.target.value })} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="mb-1.5 block text-xs uppercase tracking-wide text-muted-foreground">Username</Label>
+              <Input value={conn.username} onChange={(e) => setConn({ ...conn, username: e.target.value })} />
+            </div>
+            <div>
+              <Label className="mb-1.5 block text-xs uppercase tracking-wide text-muted-foreground">Password</Label>
+              <Input type="password" value={conn.password} onChange={(e) => setConn({ ...conn, password: e.target.value })} />
+            </div>
+          </div>
+          <Button className="w-full" onClick={handleConnect} disabled={running}>
+            {client ? "Reconnect" : "Connect"}
+          </Button>
+          {client && (
+            <div className="rounded-md border border-primary/40 bg-primary/10 p-3 text-xs">
+              <p className="font-medium text-primary">Connected</p>
+              <p className="mt-0.5 text-muted-foreground">
+                {existingLocations.length} existing locations on server.
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-6 rounded-md border border-border/60 bg-background/60 p-3 text-sm">
+          <p className="mb-2 font-medium">Ready to import</p>
+          <ul className="space-y-1 text-muted-foreground">
+            <li>{totalTotes} totes → locations</li>
+            <li>{totalItems} items</li>
+          </ul>
+        </div>
+
+        <Button className="mt-4 w-full" size="lg" onClick={onRun} disabled={!client || running || totalItems === 0}>
+          {running ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Importing…</> : done ? "Run again" : "Start import"}
+        </Button>
+
+        <p className="mt-4 text-[11px] leading-relaxed text-muted-foreground">
+          Note: this app calls the Homebox API directly from your browser. If you see CORS errors, make sure your Homebox instance allows requests from this app's origin (or run both on the same host).
+        </p>
+      </section>
+
+      <section className="rounded-lg border border-border bg-card p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-xl font-semibold">Progress</h2>
+          <span className="text-sm text-muted-foreground">{progress}%</span>
+        </div>
+        <Progress value={progress} className="mb-4" />
+        <ScrollArea className="h-[420px] rounded border border-border/60 bg-background/60 p-3 font-mono text-xs">
+          {logs.length === 0 ? (
+            <p className="text-muted-foreground">Logs will appear here once the import starts.</p>
+          ) : (
+            <ul className="space-y-1">
+              {logs.map((l, i) => (
+                <li key={i} className="flex gap-2">
+                  {l.level === "ok" && <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />}
+                  {l.level === "error" && <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />}
+                  {l.level === "info" && <div className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+                  <span className={l.level === "error" ? "text-destructive" : "text-foreground/90"}>{l.text}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </ScrollArea>
+        <div className="mt-4 flex">
+          <Button variant="outline" onClick={onBack} disabled={running}>
+            <ArrowLeft className="mr-2 h-4 w-4" /> Back
+          </Button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function NavButtons({ onBack, onNext, nextLabel, nextDisabled }: { onBack: () => void; onNext: () => void; nextLabel: string; nextDisabled?: boolean }) {
+  return (
+    <div className="mt-8 flex items-center justify-between">
+      <Button variant="outline" onClick={onBack}>
+        <ArrowLeft className="mr-2 h-4 w-4" /> Back
+      </Button>
+      <Button onClick={onNext} disabled={nextDisabled}>
+        {nextLabel} <ArrowRight className="ml-2 h-4 w-4" />
+      </Button>
     </div>
   );
 }
