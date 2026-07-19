@@ -13,6 +13,12 @@ export interface HomeboxLocation {
   description?: string;
 }
 
+export interface HomeboxLabel {
+  id: string;
+  name: string;
+  description?: string;
+}
+
 export interface HomeboxItem {
   id: string;
   name: string;
