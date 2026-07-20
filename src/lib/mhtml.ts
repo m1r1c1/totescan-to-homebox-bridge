@@ -49,26 +49,50 @@ function looksLikeMime(text: string): boolean {
   return head.includes("mime-version:") || head.includes("content-type: multipart/");
 }
 
-function extractHtmlFromMime(raw: string): string {
-  // Grab overall boundary
+function extractFromMime(raw: string): { html: string; embedded: EmbeddedPartsMap } {
+  const embedded: EmbeddedPartsMap = new Map();
+  let html = raw;
   const boundaryMatch = raw.match(/boundary="?([^"\r\n;]+)"?/i);
-  if (!boundaryMatch) return raw;
+  if (!boundaryMatch) return { html, embedded };
   const boundary = "--" + boundaryMatch[1];
   const parts = raw.split(boundary);
   for (const part of parts) {
-    if (!/content-type:\s*text\/html/i.test(part)) continue;
-    const headerEnd = part.indexOf("\r\n\r\n") >= 0 ? part.indexOf("\r\n\r\n") + 4 : part.indexOf("\n\n") + 2;
+    const headerEnd = part.indexOf("\r\n\r\n") >= 0
+      ? part.indexOf("\r\n\r\n") + 4
+      : part.indexOf("\n\n") >= 0 ? part.indexOf("\n\n") + 2 : -1;
     if (headerEnd <= 0) continue;
     const headers = part.slice(0, headerEnd);
-    let body = part.slice(headerEnd);
-    // Strip trailing boundary termination
-    body = body.replace(/\r?\n--\s*$/, "");
+    let body = part.slice(headerEnd).replace(/\r?\n--\s*$/, "");
+    const contentType = /content-type:\s*([^\r\n;]+)/i.exec(headers)?.[1]?.trim().toLowerCase() ?? "";
     const encoding = /content-transfer-encoding:\s*([^\r\n]+)/i.exec(headers)?.[1]?.trim().toLowerCase();
-    if (encoding === "quoted-printable") body = decodeQuotedPrintable(body);
-    else if (encoding === "base64") body = atob(body.replace(/\s+/g, ""));
-    return body;
+    const location = /content-location:\s*([^\r\n]+)/i.exec(headers)?.[1]?.trim();
+
+    if (contentType.startsWith("text/html")) {
+      if (encoding === "quoted-printable") body = decodeQuotedPrintable(body);
+      else if (encoding === "base64") body = atob(body.replace(/\s+/g, ""));
+      html = body;
+      continue;
+    }
+    // Binary parts (images, etc.) — decode to bytes and index by Content-Location.
+    if (!location) continue;
+    let bytes: Uint8Array;
+    if (encoding === "base64") {
+      const b64 = body.replace(/\s+/g, "");
+      const bin = atob(b64);
+      bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    } else if (encoding === "quoted-printable") {
+      const decoded = decodeQuotedPrintable(body);
+      bytes = new Uint8Array(decoded.length);
+      for (let i = 0; i < decoded.length; i++) bytes[i] = decoded.charCodeAt(i) & 0xff;
+    } else {
+      // 7bit/8bit/binary — best-effort raw bytes
+      bytes = new Uint8Array(body.length);
+      for (let i = 0; i < body.length; i++) bytes[i] = body.charCodeAt(i) & 0xff;
+    }
+    embedded.set(location, { contentType: contentType || "application/octet-stream", bytes });
   }
-  return raw;
+  return { html, embedded };
 }
 
 function decodeQuotedPrintable(input: string): string {
