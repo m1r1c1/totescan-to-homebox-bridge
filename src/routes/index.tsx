@@ -524,14 +524,10 @@ function StepReview({
   totes,
   selectedIds,
   setSelectedIds,
-  onBack,
-  onNext,
 }: {
   totes: ParsedTote[];
   selectedIds: Set<string>;
   setSelectedIds: (s: Set<string>) => void;
-  onBack: () => void;
-  onNext: () => void;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const toggle = (id: string) => {
