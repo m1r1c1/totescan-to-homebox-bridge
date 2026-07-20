@@ -272,13 +272,13 @@ function App() {
             let primaryAssigned = false;
             for (const url of item.imageUrls) {
               try {
-                const blob = await fetchImageAsBlob(url);
+                const { blob, source } = await resolveImageBlob(url, embedded);
                 const filename = url.split("/").pop()?.split("?")[0] ?? "photo.jpg";
                 const isPrimary = !primaryAssigned;
-                client.setPhase(`import:uploadAttachment "${filename}"`);
+                client.setPhase(`import:uploadAttachment "${filename}" (${source})`);
                 await client.uploadAttachment(created.id, blob, filename, "photo", isPrimary);
                 primaryAssigned = true;
-                log({ level: "ok", text: `      photo ${filename}${isPrimary ? " (primary)" : ""}` });
+                log({ level: "ok", text: `      photo ${filename} [${source}]${isPrimary ? " (primary)" : ""}` });
               } catch (e) {
                 log({ level: "error", text: `      photo failed (${url}): ${(e as Error).message}` });
               }
