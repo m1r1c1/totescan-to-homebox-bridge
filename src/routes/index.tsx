@@ -52,6 +52,7 @@ function App() {
   const [existingLocations, setExistingLocations] = useState<HomeboxLocation[]>([]);
   const [existingLabels, setExistingLabels] = useState<HomeboxLabel[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticEntry[]>([]);
   const [progress, setProgress] = useState(0);
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
