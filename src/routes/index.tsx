@@ -795,6 +795,7 @@ function StepImport({
   totalItems: number;
   logs: LogEntry[];
   diagnostics: DiagnosticEntry[];
+  homeboxClient: HomeboxClient | null;
   onClearDiagnostics: () => void;
   progress: number;
   running: boolean;
