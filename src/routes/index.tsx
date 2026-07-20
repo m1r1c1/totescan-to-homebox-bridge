@@ -1038,10 +1038,11 @@ function DiagnosticsPanel({ entries, onClear, client }: { entries: DiagnosticEnt
                     <span
                       className={`inline-flex h-5 min-w-[42px] items-center justify-center rounded px-1.5 font-mono text-[10px] font-semibold ${
                         e.ok
-                          ? "bg-primary/15 text-primary"
+                          ? "bg-success/15 text-success"
                           : "bg-destructive/15 text-destructive"
                       }`}
                     >
+
                       {e.status ?? "ERR"}
                     </span>
                     <span className="font-mono text-[11px] font-semibold uppercase text-muted-foreground">{e.method}</span>
