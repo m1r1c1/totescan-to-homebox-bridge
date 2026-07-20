@@ -344,6 +344,7 @@ function App() {
             totalItems={totalItems}
             logs={logs}
             diagnostics={diagnostics}
+            homeboxClient={client}
             onClearDiagnostics={() => setDiagnostics([])}
             progress={progress}
             running={running}
@@ -778,6 +779,7 @@ function StepImport({
   totalItems,
   logs,
   diagnostics,
+  homeboxClient,
   onClearDiagnostics,
   progress,
   running,
@@ -794,6 +796,7 @@ function StepImport({
   totalItems: number;
   logs: LogEntry[];
   diagnostics: DiagnosticEntry[];
+  homeboxClient: HomeboxClient | null;
   onClearDiagnostics: () => void;
   progress: number;
   running: boolean;
@@ -882,17 +885,51 @@ function StepImport({
           </div>
         </div>
 
-        <DiagnosticsPanel entries={diagnostics} onClear={onClearDiagnostics} />
+        <DiagnosticsPanel entries={diagnostics} onClear={onClearDiagnostics} client={homeboxClient} />
       </section>
     </div>
   );
 }
 
-function DiagnosticsPanel({ entries, onClear }: { entries: DiagnosticEntry[]; onClear: () => void }) {
+function DiagnosticsPanel({ entries, onClear, client }: { entries: DiagnosticEntry[]; onClear: () => void; client: HomeboxClient | null }) {
   const [openId, setOpenId] = useState<number | null>(null);
   const [onlyErrors, setOnlyErrors] = useState(false);
+  const [cookieTest, setCookieTest] = useState<{ status: number; ok: boolean } | null>(null);
+  const [testing, setTesting] = useState(false);
   const filtered = onlyErrors ? entries.filter((e) => !e.ok) : entries;
   const errCount = entries.filter((e) => !e.ok).length;
+
+  // Cookie diagnostics summary (best-effort — browsers hide Set-Cookie and the
+  // Cookie header from JS for cross-origin fetches, so we infer from what we
+  // CAN see and offer an explicit cookie-only auth probe).
+  const loginEntry = [...entries].reverse().find((e) => /users\/login/.test(e.url));
+  const lastEntry = entries[entries.length - 1];
+  const setCookieVisible = loginEntry?.responseHeaders?.["set-cookie"];
+  const acaCredentials =
+    loginEntry?.responseHeaders?.["access-control-allow-credentials"] ??
+    lastEntry?.responseHeaders?.["access-control-allow-credentials"];
+  const acaOrigin =
+    loginEntry?.responseHeaders?.["access-control-allow-origin"] ??
+    lastEntry?.responseHeaders?.["access-control-allow-origin"];
+  const visibleHbCookies =
+    typeof document !== "undefined"
+      ? document.cookie.split(";").map((c) => c.trim()).filter((c) => c.startsWith("hb.auth."))
+      : [];
+
+  async function runCookieTest() {
+    if (!client) return;
+    setTesting(true);
+    try {
+      const r = await client.testCookieOnlyAuth();
+      setCookieTest(r);
+      if (r.ok) toast.success("Cookie-only auth succeeded");
+      else toast.error(`Cookie-only auth failed (${r.status})`);
+    } catch (e) {
+      toast.error(`Test failed: ${(e as Error).message}`);
+    } finally {
+      setTesting(false);
+    }
+  }
 
   function copyAll() {
     const text = entries
@@ -935,6 +972,50 @@ function DiagnosticsPanel({ entries, onClear }: { entries: DiagnosticEntry[]; on
           </Button>
         </div>
       </div>
+
+      <div className="mb-3 rounded-md border border-border/60 bg-background/60 p-3 text-xs">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <p className="font-semibold uppercase tracking-wider text-muted-foreground">Cookie auth</p>
+          <Button size="sm" variant="outline" onClick={runCookieTest} disabled={!client || testing}>
+            {testing ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : null}
+            Test cookie-only auth
+          </Button>
+        </div>
+        <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 font-mono text-[11px]">
+          <dt className="text-muted-foreground">login Set-Cookie</dt>
+          <dd className="break-all">
+            {loginEntry
+              ? setCookieVisible
+                ? setCookieVisible
+                : <span className="text-muted-foreground">not visible to JS (normal for cross-origin / HttpOnly)</span>
+              : <span className="text-muted-foreground">no login recorded yet</span>}
+          </dd>
+          <dt className="text-muted-foreground">ACA-Credentials</dt>
+          <dd className={acaCredentials === "true" ? "text-primary" : "text-destructive"}>
+            {acaCredentials ?? "missing — Homebox must send Access-Control-Allow-Credentials: true"}
+          </dd>
+          <dt className="text-muted-foreground">ACA-Origin</dt>
+          <dd className={acaOrigin && acaOrigin !== "*" ? "text-primary" : "text-destructive"}>
+            {acaOrigin ?? "missing"} {acaOrigin === "*" && "(must echo specific origin, not *, for cookies)"}
+          </dd>
+          <dt className="text-muted-foreground">document.cookie</dt>
+          <dd className="break-all">
+            {visibleHbCookies.length > 0
+              ? visibleHbCookies.join("; ")
+              : <span className="text-muted-foreground">no hb.auth.* cookies visible (HttpOnly cookies are hidden from JS — this is expected)</span>}
+          </dd>
+          <dt className="text-muted-foreground">cookie-only probe</dt>
+          <dd className={cookieTest ? (cookieTest.ok ? "text-primary" : "text-destructive") : "text-muted-foreground"}>
+            {cookieTest
+              ? `${cookieTest.ok ? "SUCCESS" : "FAILED"} — GET /api/v1/users/self without Bearer → ${cookieTest.status}`
+              : "not run yet — click the button to verify cookies alone authenticate"}
+          </dd>
+        </dl>
+        <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
+          Browsers do not expose Set-Cookie response headers or the outgoing Cookie header to JavaScript for cross-origin requests, so the only reliable check is the cookie-only probe above.
+        </p>
+      </div>
+
       <ScrollArea className="h-[360px] rounded border border-border/60 bg-background/60">
         {filtered.length === 0 ? (
           <p className="p-3 text-xs text-muted-foreground">
