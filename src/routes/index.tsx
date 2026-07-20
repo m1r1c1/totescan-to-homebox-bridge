@@ -12,8 +12,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import { parseTotescanFile, renderTemplate, type ParsedTote } from "@/lib/mhtml";
-import { HomeboxClient, fetchImageAsBlob, type HomeboxLocation, type HomeboxLabel, type DiagnosticEntry } from "@/lib/homebox";
-import { DEFAULT_MAPPING, TOTE_VARIABLES, ITEM_VARIABLES, type MappingConfig } from "@/lib/mapping";
+import { HomeboxClient, fetchImageAsBlob, type HomeboxLocation, type HomeboxLabel, type DiagnosticEntry, type HomeboxCustomField, type ExistingItemIndex } from "@/lib/homebox";
+import { DEFAULT_MAPPING, TOTE_VARIABLES, ITEM_VARIABLES, buildImportRef, type MappingConfig, type CustomFieldMapping } from "@/lib/mapping";
+import { Trash2, Plus } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -132,6 +133,18 @@ function App() {
     const existingByName = new Map(existingLocations.map((l) => [l.name.toLowerCase(), l]));
     const labelsByName = new Map(existingLabels.map((l) => [l.name.toLowerCase(), l]));
 
+    // Pre-flight: build import_ref → existing item index for idempotent re-runs.
+    let existingByRef = new Map<string, ExistingItemIndex>();
+    if (mapping.skipExistingByImportRef) {
+      try {
+        client.setPhase("import:indexExisting");
+        existingByRef = await client.indexItemsByImportRef();
+        log({ level: "info", text: `Indexed ${existingByRef.size} existing items by import_ref.` });
+      } catch (e) {
+        log({ level: "error", text: `Failed to index existing items: ${(e as Error).message}` });
+      }
+    }
+
     async function resolveLabelIds(names: string[]): Promise<string[]> {
       const ids: string[] = [];
       for (const raw of names) {
@@ -188,8 +201,25 @@ function App() {
       bumpProgress();
 
       for (const item of tote.items) {
-        const itemVars = { ...toteVars, name: item.name, itemNumber: item.itemNumber, quantity: item.quantity, description: item.description, upc: item.upc };
+        const importRef = buildImportRef(tote.toteId, item.itemNumber);
+        const itemVars = {
+          ...toteVars,
+          name: item.name,
+          itemNumber: item.itemNumber,
+          quantity: item.quantity,
+          description: item.description,
+          upc: item.upc,
+          created: item.created,
+          updated: item.updated,
+        };
         const itemName = renderTemplate(mapping.itemName, itemVars).trim() || item.name;
+
+        if (mapping.skipExistingByImportRef && existingByRef.has(importRef)) {
+          log({ level: "info", text: `  = Skipped "${itemName}" (import_ref ${importRef} already imported)` });
+          bumpProgress();
+          continue;
+        }
+
         const itemDesc = renderTemplate(mapping.itemDescription, itemVars);
         const itemNotes = mapping.itemNotes ? renderTemplate(mapping.itemNotes, itemVars) : "";
         const qtyStr = mapping.itemQuantity ? renderTemplate(mapping.itemQuantity, itemVars).trim() : "";
@@ -199,6 +229,18 @@ function App() {
         const tagNames = mapping.itemTags
           ? renderTemplate(mapping.itemTags, itemVars).split(",").map((s) => s.trim()).filter(Boolean)
           : [];
+
+        // Build custom fields: user-defined + always-on import_ref.
+        const customFields: HomeboxCustomField[] = [];
+        for (const cf of mapping.customFields) {
+          const name = cf.name.trim();
+          if (!name) continue;
+          const value = renderTemplate(cf.template, itemVars).trim();
+          if (!value) continue;
+          customFields.push({ name, type: "text", textValue: value });
+        }
+        customFields.push({ name: "import_ref", type: "text", textValue: importRef });
+
         try {
           const labelIds = tagNames.length > 0 ? await resolveLabelIds(tagNames) : [];
           client.setPhase(`import:createItem "${itemName}"`);
@@ -209,28 +251,31 @@ function App() {
             quantity,
             assetId: assetId || undefined,
             labelIds: labelIds.length > 0 ? labelIds : undefined,
+            fields: customFields,
           });
-          if (itemNotes || labelIds.length > 0 || quantity !== 1) {
+          existingByRef.set(importRef, { id: created.id, name: created.name, importRef });
+          if (itemNotes) {
             try {
               client.setPhase(`import:updateItem "${itemName}"`);
               await client.updateItem(created.id, {
-                notes: itemNotes || undefined,
-                quantity,
-                labelIds: labelIds.length > 0 ? labelIds : undefined,
+                notes: itemNotes,
               });
             } catch (e) {
-              log({ level: "error", text: `  ! Item "${itemName}" details update failed: ${(e as Error).message}` });
+              log({ level: "error", text: `  ! Item "${itemName}" notes update failed: ${(e as Error).message}` });
             }
           }
           log({ level: "ok", text: `  + Item "${itemName}"${labelIds.length ? ` [${tagNames.join(", ")}]` : ""}` });
           if (mapping.uploadImages && item.imageUrls.length > 0) {
+            let primaryAssigned = false;
             for (const url of item.imageUrls) {
               try {
                 const blob = await fetchImageAsBlob(url);
                 const filename = url.split("/").pop()?.split("?")[0] ?? "photo.jpg";
+                const isPrimary = !primaryAssigned;
                 client.setPhase(`import:uploadAttachment "${filename}"`);
-                await client.uploadAttachment(created.id, blob, filename);
-                log({ level: "ok", text: `      photo ${filename}` });
+                await client.uploadAttachment(created.id, blob, filename, "photo", isPrimary);
+                primaryAssigned = true;
+                log({ level: "ok", text: `      photo ${filename}${isPrimary ? " (primary)" : ""}` });
               } catch (e) {
                 log({ level: "error", text: `      photo failed (${url}): ${(e as Error).message}` });
               }
@@ -519,7 +564,7 @@ function StepMapping({
       }
     : {};
   const itemVars: Record<string, string | number> = sampleItem
-    ? { ...toteVars, name: sampleItem.name, itemNumber: sampleItem.itemNumber, quantity: sampleItem.quantity, description: sampleItem.description, upc: sampleItem.upc }
+    ? { ...toteVars, name: sampleItem.name, itemNumber: sampleItem.itemNumber, quantity: sampleItem.quantity, description: sampleItem.description, upc: sampleItem.upc, created: sampleItem.created, updated: sampleItem.updated }
     : toteVars;
 
   const update = <K extends keyof MappingConfig>(k: K, v: MappingConfig[K]) => setMapping({ ...mapping, [k]: v });
@@ -574,9 +619,59 @@ function StepMapping({
           <div className="mt-3 flex items-center justify-between rounded-md border border-border/60 p-3">
             <div>
               <p className="text-sm font-medium">Upload item photos</p>
-              <p className="text-xs text-muted-foreground">Fetches images from Totescan's S3 and attaches to each item.</p>
+              <p className="text-xs text-muted-foreground">Fetches images from Totescan's S3 and attaches to each item. First photo becomes the primary.</p>
             </div>
             <Switch checked={mapping.uploadImages} onCheckedChange={(v) => update("uploadImages", v)} />
+          </div>
+          <div className="mt-3 flex items-center justify-between rounded-md border border-border/60 p-3">
+            <div>
+              <p className="text-sm font-medium">Skip items already imported</p>
+              <p className="text-xs text-muted-foreground">Uses the <code className="font-mono text-[11px]">import_ref</code> custom field (<code className="font-mono text-[11px]">totescan-&#123;toteId&#125;-&#123;itemNumber&#125;</code>) as a checkpoint for safe re-runs.</p>
+            </div>
+            <Switch checked={mapping.skipExistingByImportRef} onCheckedChange={(v) => update("skipExistingByImportRef", v)} />
+          </div>
+
+          <div className="mt-6">
+            <div className="mb-2 flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-semibold">Custom fields</h4>
+                <p className="text-xs text-muted-foreground">Map any Totescan field into a Homebox custom field. Empty values are skipped.</p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => update("customFields", [...mapping.customFields, { name: "", template: "" }])}
+              >
+                <Plus className="mr-1 h-3.5 w-3.5" /> Add field
+              </Button>
+            </div>
+            {mapping.customFields.length === 0 && (
+              <p className="rounded border border-dashed border-border/60 px-3 py-4 text-center text-xs text-muted-foreground">
+                No custom fields configured.
+              </p>
+            )}
+            <div className="space-y-2">
+              {mapping.customFields.map((cf, idx) => (
+                <CustomFieldRow
+                  key={idx}
+                  field={cf}
+                  preview={renderTemplate(cf.template, itemVars)}
+                  onChange={(next) => {
+                    const arr = [...mapping.customFields];
+                    arr[idx] = next;
+                    update("customFields", arr);
+                  }}
+                  onRemove={() => {
+                    const arr = mapping.customFields.filter((_, i) => i !== idx);
+                    update("customFields", arr);
+                  }}
+                />
+              ))}
+            </div>
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              An <code className="font-mono">import_ref</code> field is always written automatically for re-run safety.
+            </p>
           </div>
 
         </section>
@@ -586,6 +681,47 @@ function StepMapping({
     </div>
   );
 }
+
+function CustomFieldRow({
+  field,
+  preview,
+  onChange,
+  onRemove,
+}: {
+  field: CustomFieldMapping;
+  preview: string;
+  onChange: (next: CustomFieldMapping) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="rounded-md border border-border/60 p-3">
+      <div className="flex gap-2">
+        <Input
+          value={field.name}
+          onChange={(e) => onChange({ ...field, name: e.target.value })}
+          placeholder="Field name (e.g. Scan Code)"
+          className="text-sm"
+        />
+        <Input
+          value={field.template}
+          onChange={(e) => onChange({ ...field, template: e.target.value })}
+          placeholder="Template (e.g. {toteId})"
+          className="font-mono text-sm"
+        />
+        <Button type="button" variant="ghost" size="icon" onClick={onRemove} aria-label="Remove field">
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+      {preview && (
+        <div className="mt-1.5 rounded border border-border/50 bg-background px-2 py-1 text-xs text-muted-foreground">
+          <span className="mr-1 text-[10px] uppercase tracking-wider text-primary">preview</span>
+          <span className="whitespace-pre-wrap">{preview}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 function VarChips({ vars }: { vars: string[] }) {
   return (
