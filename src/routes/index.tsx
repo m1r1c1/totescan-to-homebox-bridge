@@ -1755,17 +1755,40 @@ function StepLocations({
   locationRules,
   setLocationRules,
   existingLocations,
+  locationSourcesDraft,
+  setLocationSourcesDraft,
+  locationSources,
+  onRefresh,
+  conflicts,
+  conflictRules,
+  setConflictRules,
 }: {
   distinctLocations: Array<{ name: string; totes: number; items: number }>;
   locationRules: Record<string, { import: boolean; remapTo: string }>;
   setLocationRules: (r: Record<string, { import: boolean; remapTo: string }>) => void;
   existingLocations: HomeboxLocation[];
+  locationSourcesDraft: LocationSources;
+  setLocationSourcesDraft: (s: LocationSources) => void;
+  locationSources: LocationSources;
+  onRefresh: () => void;
+  conflicts: Array<{ key: string; totes: number; items: number; values: Partial<Record<keyof LocationSources, string>> }>;
+  conflictRules: Record<string, keyof LocationSources>;
+  setConflictRules: (r: Record<string, keyof LocationSources>) => void;
 }) {
   const [filter, setFilter] = useState("");
+
+  const dirty = LOCATION_SOURCE_KEYS.some((k) => locationSourcesDraft[k] !== locationSources[k]);
 
   function setRule(name: string, patch: Partial<{ import: boolean; remapTo: string }>) {
     const prev = locationRules[name] ?? { import: true, remapTo: "" };
     setLocationRules({ ...locationRules, [name]: { ...prev, ...patch } });
+  }
+
+  function defaultConflictPick(values: Partial<Record<keyof LocationSources, string>>): keyof LocationSources {
+    for (const k of LOCATION_SOURCE_KEYS) {
+      if (values[k]) return k;
+    }
+    return LOCATION_SOURCE_KEYS[0];
   }
 
   const filtered = distinctLocations.filter((l) =>
@@ -1782,14 +1805,96 @@ function StepLocations({
     return r && !r.import && !r.remapTo.trim();
   }).length;
 
+  const sourcesBlock = (
+    <div className="mb-4 flex flex-wrap items-center gap-4 rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+      <div className="text-xs font-medium text-muted-foreground">Location sources:</div>
+      {LOCATION_SOURCE_KEYS.map((k) => (
+        <label key={k} className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-primary"
+            checked={locationSourcesDraft[k]}
+            onChange={(e) => setLocationSourcesDraft({ ...locationSourcesDraft, [k]: e.target.checked })}
+          />
+          {LOCATION_SOURCE_LABELS[k]}
+        </label>
+      ))}
+      <div className="ml-auto flex items-center gap-2">
+        {dirty && <span className="text-[11px] text-muted-foreground">unsaved changes</span>}
+        <Button size="sm" variant={dirty ? "default" : "outline"} onClick={onRefresh} disabled={!dirty}>
+          Refresh
+        </Button>
+      </div>
+    </div>
+  );
+
+  const conflictsBlock = conflicts.length > 0 && (
+    <div className="mb-6 overflow-hidden rounded-md border border-amber-500/40 bg-amber-500/5">
+      <div className="border-b border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs">
+        <span className="font-medium text-amber-200">{conflicts.length} conflict{conflicts.length === 1 ? "" : "s"}</span>{" "}
+        <span className="text-muted-foreground">
+          — these totes have values in 2+ enabled sources. Pick which source to use (default = priority: Location → Title → Profile).
+        </span>
+      </div>
+      <table className="w-full text-sm">
+        <thead className="bg-muted/40 text-[11px] uppercase tracking-wider text-muted-foreground">
+          <tr>
+            {LOCATION_SOURCE_KEYS.map((k) => (
+              <th key={k} className="px-3 py-2 text-left">{LOCATION_SOURCE_LABELS[k]}</th>
+            ))}
+            <th className="px-3 py-2 text-left">Totes</th>
+            <th className="px-3 py-2 text-left">Items</th>
+            <th className="px-3 py-2 text-left">Use source</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border/60">
+          {conflicts.map((c) => {
+            const pick = conflictRules[c.key] ?? defaultConflictPick(c.values);
+            return (
+              <tr key={c.key}>
+                {LOCATION_SOURCE_KEYS.map((k) => (
+                  <td key={k} className={`px-3 py-2 text-xs ${pick === k ? "font-medium text-foreground" : "text-muted-foreground"}`}>
+                    {c.values[k] ?? <span className="italic opacity-50">—</span>}
+                  </td>
+                ))}
+                <td className="px-3 py-2 text-xs text-muted-foreground">{c.totes}</td>
+                <td className="px-3 py-2 text-xs text-muted-foreground">{c.items}</td>
+                <td className="px-3 py-2">
+                  <div className="flex gap-1">
+                    {LOCATION_SOURCE_KEYS.filter((k) => c.values[k]).map((k) => (
+                      <Button
+                        key={k}
+                        size="sm"
+                        variant={pick === k ? "default" : "outline"}
+                        className="h-7 px-2 text-xs"
+                        onClick={() => setConflictRules({ ...conflictRules, [c.key]: k })}
+                      >
+                        {LOCATION_SOURCE_LABELS[k]}
+                      </Button>
+                    ))}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+
   if (distinctLocations.length === 0) {
     return (
-      <EmptyHint text="Upload an export (and set the Location name template in Mapping) to see distinct locations here." />
+      <div>
+        {sourcesBlock}
+        <EmptyHint text="Upload an export and enable at least one location source above to see distinct locations here." />
+      </div>
     );
   }
 
   return (
     <div>
+      {sourcesBlock}
+      {conflictsBlock}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="text-xs text-muted-foreground">
           <span className="font-medium text-foreground">{distinctLocations.length}</span> distinct ·{" "}
