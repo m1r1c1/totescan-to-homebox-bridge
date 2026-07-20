@@ -22,10 +22,26 @@ export interface ParsedTote {
   items: ParsedItem[];
 }
 
-export async function parseTotescanFile(file: File): Promise<ParsedTote[]> {
+export interface EmbeddedPart {
+  contentType: string;
+  bytes: Uint8Array;
+}
+
+export type EmbeddedPartsMap = Map<string, EmbeddedPart>;
+
+export interface ParseResult {
+  totes: ParsedTote[];
+  /** Non-HTML MIME parts keyed by Content-Location (the original absolute URL). */
+  embedded: EmbeddedPartsMap;
+}
+
+export async function parseTotescanFile(file: File): Promise<ParseResult> {
   const raw = await file.text();
-  const html = looksLikeMime(raw) ? extractHtmlFromMime(raw) : raw;
-  return parseTotesFromHtml(html);
+  if (looksLikeMime(raw)) {
+    const { html, embedded } = extractFromMime(raw);
+    return { totes: parseTotesFromHtml(html), embedded };
+  }
+  return { totes: parseTotesFromHtml(raw), embedded: new Map() };
 }
 
 function looksLikeMime(text: string): boolean {
