@@ -352,9 +352,9 @@ function App() {
         for (const raw of rawTagNames) {
           const rule = tagRules[raw];
           if (!rule || rule.import) { resolvedTagNames.push(raw); continue; }
-          const target = rule.remapTo.trim();
-          if (target) resolvedTagNames.push(target);
-          // else: dropped entirely
+          const targets = (rule.remapTo ?? []).map((s) => s.trim()).filter(Boolean);
+          for (const t of targets) resolvedTagNames.push(t);
+          // if targets empty: dropped entirely
         }
         const tagNames = Array.from(new Set(resolvedTagNames));
 
