@@ -34,6 +34,20 @@ export interface HomeboxItem {
   name: string;
 }
 
+export interface HomeboxCustomField {
+  name: string;
+  type?: string;
+  textValue?: string;
+  numberValue?: number;
+  booleanValue?: boolean;
+}
+
+export interface ExistingItemIndex {
+  id: string;
+  name: string;
+  importRef?: string;
+}
+
 export interface DiagnosticEntry {
   id: number;
   timestamp: string;
@@ -244,6 +258,7 @@ export class HomeboxClient {
     quantity?: number;
     assetId?: string;
     labelIds?: string[];
+    fields?: HomeboxCustomField[];
   }): Promise<HomeboxItem> {
     if (!this.itemTypeId) await this.ensureEntityTypes();
     const body: Record<string, unknown> = {
@@ -254,6 +269,7 @@ export class HomeboxClient {
       quantity: payload.quantity ?? 1,
     };
     if (payload.labelIds && payload.labelIds.length > 0) body.tagIds = payload.labelIds;
+    if (payload.fields && payload.fields.length > 0) body.fields = normalizeFields(payload.fields);
     const r = await this.request("POST", `/api/v1/entities`, { jsonBody: body });
     if (!r.ok) throw new Error(`Create item failed: ${r.status} ${await safeText(r)}`);
     const out = await r.json();
@@ -275,6 +291,7 @@ export class HomeboxClient {
     locationId?: string;
     assetId?: string;
     labelIds?: string[];
+    fields?: HomeboxCustomField[];
   }): Promise<void> {
     const cur = await this.request("GET", `/api/v1/entities/${itemId}`);
     if (!cur.ok) throw new Error(`Fetch entity failed: ${cur.status}`);
@@ -291,6 +308,11 @@ export class HomeboxClient {
       tagIds:
         patch.labelIds ??
         (Array.isArray(current?.tags) ? current.tags.map((t: { id: string }) => t.id) : []),
+      fields: patch.fields
+        ? normalizeFields(patch.fields)
+        : Array.isArray(current?.fields)
+          ? current.fields
+          : [],
     };
     delete body.entityType;
     delete body.parent;
@@ -308,6 +330,36 @@ export class HomeboxClient {
     if (!r.ok) throw new Error(`Update item failed: ${r.status} ${await safeText(r)}`);
   }
 
+  // Fetch every existing item entity and index them by their import_ref custom field
+  // so re-runs can skip previously-imported items.
+  async indexItemsByImportRef(): Promise<Map<string, ExistingItemIndex>> {
+    if (!this.itemTypeId) await this.ensureEntityTypes();
+    const index = new Map<string, ExistingItemIndex>();
+    let page = 1;
+    while (true) {
+      const r = await this.request("GET", `/api/v1/entities?page=${page}&pageSize=500`);
+      if (!r.ok) throw new Error(`List entities failed: ${r.status}`);
+      const body = await r.json();
+      const items: Array<{
+        id: string;
+        name: string;
+        entityType?: { id?: string };
+        fields?: Array<{ name?: string; textValue?: string }>;
+      }> = Array.isArray(body) ? body : (body.items ?? []);
+      for (const it of items) {
+        if (it.entityType?.id !== this.itemTypeId) continue;
+        const ref = Array.isArray(it.fields)
+          ? it.fields.find((f) => (f.name ?? "").toLowerCase() === "import_ref")?.textValue
+          : undefined;
+        if (ref) index.set(ref, { id: it.id, name: it.name, importRef: ref });
+      }
+      const total = body?.total ?? items.length;
+      if (page * 500 >= total || items.length === 0) break;
+      page++;
+    }
+    return index;
+  }
+
   async listLabels(): Promise<HomeboxLabel[]> {
     const r = await this.request("GET", `/api/v1/tags`);
     if (!r.ok) throw new Error(`List tags failed: ${r.status}`);
@@ -323,16 +375,31 @@ export class HomeboxClient {
     return (await r.json()) as HomeboxLabel;
   }
 
-  async uploadAttachment(itemId: string, blob: Blob, filename: string, type = "photo"): Promise<void> {
+  async uploadAttachment(
+    itemId: string,
+    blob: Blob,
+    filename: string,
+    type = "photo",
+    primary = false,
+  ): Promise<void> {
     const form = new FormData();
     form.append("file", blob, filename);
     form.append("type", type);
     form.append("name", filename);
-    form.append("primary", "false");
+    form.append("primary", primary ? "true" : "false");
     const r = await this.request("POST", `/api/v1/entities/${itemId}/attachments`, { body: form });
     if (!r.ok) throw new Error(`Upload attachment failed: ${r.status} ${await safeText(r)}`);
   }
 }
+
+function normalizeFields(fields: HomeboxCustomField[]): HomeboxCustomField[] {
+  return fields.map((f) => ({
+    name: f.name,
+    type: f.type ?? "text",
+    textValue: f.textValue ?? "",
+  }));
+}
+
 
 async function safeText(r: Response): Promise<string> {
   try {
