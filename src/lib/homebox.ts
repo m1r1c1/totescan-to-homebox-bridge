@@ -101,15 +101,36 @@ export class HomeboxClient {
     this.phase = phase;
   }
 
+  // When suppressAuthHeader is true, skip the Authorization header entirely so
+  // the request relies on the browser-managed cookie (hb.auth.token) alone.
+  suppressAuthHeader = false;
+
   private authHeaders(extra: Record<string, string> = {}): Record<string, string> {
     const h: Record<string, string> = { ...extra };
-    if (this.token) {
+    if (this.token && !this.suppressAuthHeader) {
       // Homebox may return the token already prefixed with "Bearer " — don't double it.
       const raw = this.token.trim();
       const value = /^bearer\s+/i.test(raw) ? raw : `Bearer ${raw}`;
       h["Authorization"] = value;
     }
     return h;
+  }
+
+  // Reissues a lightweight authenticated call WITHOUT the Authorization header
+  // to prove whether the browser is sending the hb.auth.token cookie. Returns
+  // true on 2xx (cookie auth works), false otherwise.
+  async testCookieOnlyAuth(): Promise<{ ok: boolean; status: number }> {
+    const prev = this.suppressAuthHeader;
+    this.suppressAuthHeader = true;
+    const prevPhase = this.phase;
+    this.setPhase("diagnostics:cookie-only");
+    try {
+      const r = await this.request("GET", `/api/v1/users/self`);
+      return { ok: r.ok, status: r.status };
+    } finally {
+      this.suppressAuthHeader = prev;
+      this.setPhase(prevPhase);
+    }
   }
 
   // Central fetch wrapper — records every request/response for diagnostics.
