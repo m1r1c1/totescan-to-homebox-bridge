@@ -1397,13 +1397,23 @@ function StepTags({
   tagRules,
   setTagRules,
   existingLabels,
+  tagSourcesDraft,
+  setTagSourcesDraft,
+  tagSources,
+  onRefresh,
 }: {
   distinctTags: Array<{ name: string; count: number }>;
   tagRules: Record<string, { import: boolean; remapTo: string }>;
   setTagRules: (r: Record<string, { import: boolean; remapTo: string }>) => void;
   existingLabels: HomeboxLabel[];
+  tagSourcesDraft: TagSources;
+  setTagSourcesDraft: (s: TagSources) => void;
+  tagSources: TagSources;
+  onRefresh: () => void;
 }) {
   const [filter, setFilter] = useState("");
+
+  const dirty = TAG_SOURCE_KEYS.some((k) => tagSourcesDraft[k] !== tagSources[k]);
 
   function setRule(name: string, patch: Partial<{ import: boolean; remapTo: string }>) {
     const prev = tagRules[name] ?? { import: true, remapTo: "" };
