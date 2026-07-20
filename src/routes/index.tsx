@@ -1523,7 +1523,7 @@ function StepTags({
           </thead>
           <tbody className="divide-y divide-border/60">
             {filtered.map((t) => {
-              const rule = tagRules[t.name] ?? { import: true, remapTo: "" };
+              const rule = tagRules[t.name] ?? { import: true, remapTo: [] as string[] };
               const willImport = rule.import;
               return (
                 <tr key={t.name} className={willImport ? "" : "bg-background/60"}>
@@ -1536,13 +1536,12 @@ function StepTags({
                     />
                   </td>
                   <td className="px-3 py-2">
-                    <Input
-                      list="tag-remap-options"
+                    <TagChipInput
                       value={rule.remapTo}
-                      onChange={(e) => setRule(t.name, { remapTo: e.target.value })}
+                      onChange={(next) => setRule(t.name, { remapTo: next })}
                       disabled={willImport}
-                      placeholder={willImport ? "—" : "leave blank to drop"}
-                      className="h-8 text-sm"
+                      placeholder={willImport ? "—" : "type tag + Enter (leave empty to drop)"}
+                      datalistId="tag-remap-options"
                     />
                   </td>
                 </tr>
