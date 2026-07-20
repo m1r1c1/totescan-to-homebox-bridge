@@ -71,14 +71,16 @@ function App() {
   async function handleFile(file: File) {
     try {
       const parsed = await parseTotescanFile(file);
-      if (parsed.length === 0) {
+      if (parsed.totes.length === 0) {
         toast.error("No totes found in that file. Is it a Totescan MHTML export?");
         return;
       }
-      setTotes(parsed);
-      setSelectedIds(new Set(parsed.map((t) => t.toteId)));
+      setTotes(parsed.totes);
+      setEmbedded(parsed.embedded);
+      setSelectedIds(new Set(parsed.totes.map((t) => t.toteId)));
       setStep(2);
-      toast.success(`Parsed ${parsed.length} totes with ${parsed.reduce((n, t) => n + t.items.length, 0)} items.`);
+      const itemCount = parsed.totes.reduce((n, t) => n + t.items.length, 0);
+      toast.success(`Parsed ${parsed.totes.length} totes, ${itemCount} items, ${parsed.embedded.size} embedded images.`);
     } catch (e) {
       toast.error(`Failed to parse: ${(e as Error).message}`);
     }
