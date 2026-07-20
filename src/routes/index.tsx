@@ -119,6 +119,7 @@ function App() {
     setRunning(true);
     setDone(false);
     setLogs([]);
+    setDiagnostics([]);
     setProgress(0);
 
     const totalSteps = selectedTotes.length + totalItems;
