@@ -232,23 +232,44 @@ function App() {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [totes, tagSources]);
 
-  // Distinct location names rendered from the current locationName template
-  // across all parsed totes, with item counts for context.
+  // Distinct location names derived from the enabled location sources
+  // (with conflict overrides applied). Falls back to the locationName
+  // template only when no sources are enabled.
   const distinctLocations = useMemo(() => {
     const counts = new Map<string, { totes: number; items: number }>();
     for (const tote of totes) {
-      const toteVars = {
-        toteId: tote.toteId, title: tote.title, location: tote.location,
-        profile: tote.profile, parentToteId: tote.parentToteId, dateUpdated: tote.dateUpdated,
-      };
-      const name = (renderTemplate(mapping.locationName, toteVars).trim() || tote.title || tote.toteId);
+      const name = pickLocationName(tote, locationSources, locationConflictRules, mapping);
       const prev = counts.get(name) ?? { totes: 0, items: 0 };
       counts.set(name, { totes: prev.totes + 1, items: prev.items + tote.items.length });
     }
     return Array.from(counts.entries())
       .map(([name, v]) => ({ name, totes: v.totes, items: v.items }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [totes, mapping.locationName]);
+  }, [totes, locationSources, locationConflictRules, mapping]);
+
+  // Totes with 2+ enabled sources that disagree, grouped by the unique
+  // combination of source values so users only resolve each combo once.
+  const locationConflicts = useMemo(() => {
+    const groups = new Map<string, {
+      key: string;
+      totes: number;
+      items: number;
+      values: Partial<Record<keyof LocationSources, string>>;
+    }>();
+    for (const tote of totes) {
+      const cands = locationCandidatesFor(tote, locationSources);
+      if (new Set(cands.map((c) => c.value)).size < 2) continue;
+      const key = locationConflictKey(tote, locationSources);
+      const prev = groups.get(key);
+      if (prev) { prev.totes += 1; prev.items += tote.items.length; }
+      else {
+        const values: Partial<Record<keyof LocationSources, string>> = {};
+        for (const c of cands) values[c.src] = c.value;
+        groups.set(key, { key, totes: 1, items: tote.items.length, values });
+      }
+    }
+    return Array.from(groups.values()).sort((a, b) => b.items - a.items);
+  }, [totes, locationSources]);
 
   async function handleFile(file: File) {
     try {
