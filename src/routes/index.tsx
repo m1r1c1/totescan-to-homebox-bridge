@@ -320,83 +320,192 @@ function App() {
       </header>
 
       <main className="mx-auto max-w-[1600px] px-6 py-8">
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-          <DashboardSection id="upload" title="1. Upload export" icon={<FileText className="h-4 w-4" />} defaultOpen>
-            <StepUpload onFile={handleFile} />
-          </DashboardSection>
-
-          <DashboardSection
-            id="review"
-            title="2. Review totes"
-            icon={<Package className="h-4 w-4" />}
-            badge={totes.length > 0 ? `${selectedIds.size}/${totes.length}` : undefined}
-            defaultOpen
-          >
-            {totes.length === 0 ? (
-              <EmptyHint text="Upload a Totescan export to see totes here." />
-            ) : (
-              <StepReview totes={totes} selectedIds={selectedIds} setSelectedIds={setSelectedIds} />
-            )}
-          </DashboardSection>
-
-          <DashboardSection
-            id="mapping"
-            title="3. Field mapping"
-            icon={<Settings2 className="h-4 w-4" />}
-            defaultOpen
-            className="xl:col-span-2"
-          >
-            <StepMapping mapping={mapping} setMapping={setMapping} sampleTote={selectedTotes[0] ?? totes[0]} />
-          </DashboardSection>
-
-          <DashboardSection
-            id="connection"
-            title="4. Homebox connection"
-            icon={<Send className="h-4 w-4" />}
-            badge={client ? "connected" : undefined}
-            defaultOpen
-          >
-            <ConnectionCard
-              conn={conn}
-              setConn={setConn}
-              client={client}
-              handleConnect={handleConnect}
-              existingLocations={existingLocations}
-              running={running}
-            />
-          </DashboardSection>
-
-          <DashboardSection
-            id="import"
-            title="5. Run import"
-            icon={<Boxes className="h-4 w-4" />}
-            badge={running ? `${progress}%` : done ? "done" : undefined}
-            defaultOpen
-          >
-            <ImportRunner
-              client={client}
-              totalTotes={selectedTotes.length}
-              totalItems={totalItems}
-              logs={logs}
-              progress={progress}
-              running={running}
-              done={done}
-              onRun={runImport}
-            />
-          </DashboardSection>
-
-          <DashboardSection
-            id="diagnostics"
-            title="Diagnostics"
-            icon={<Settings2 className="h-4 w-4" />}
-            badge={diagnostics.length > 0 ? String(diagnostics.length) : undefined}
-            defaultOpen={false}
-            className="xl:col-span-3"
-          >
-            <DiagnosticsPanel entries={diagnostics} onClear={() => setDiagnostics([])} client={client} />
-          </DashboardSection>
-        </div>
+        <AppTabs
+          tabs={[
+            {
+              value: "upload",
+              label: "1. Upload",
+              icon: <FileText className="h-4 w-4" />,
+              content: (
+                <DashboardSection id="upload" title="Upload export" icon={<FileText className="h-4 w-4" />} defaultOpen className="md:col-span-2">
+                  <StepUpload onFile={handleFile} />
+                </DashboardSection>
+              ),
+            },
+            {
+              value: "review",
+              label: "2. Review",
+              icon: <Package className="h-4 w-4" />,
+              badge: totes.length > 0 ? `${selectedIds.size}/${totes.length}` : undefined,
+              content: (
+                <DashboardSection
+                  id="review"
+                  title="Review totes"
+                  icon={<Package className="h-4 w-4" />}
+                  badge={totes.length > 0 ? `${selectedIds.size}/${totes.length}` : undefined}
+                  defaultOpen
+                  className="md:col-span-2"
+                >
+                  {totes.length === 0 ? (
+                    <EmptyHint text="Upload a Totescan export to see totes here." />
+                  ) : (
+                    <StepReview totes={totes} selectedIds={selectedIds} setSelectedIds={setSelectedIds} />
+                  )}
+                </DashboardSection>
+              ),
+            },
+            {
+              value: "mapping",
+              label: "3. Mapping",
+              icon: <Settings2 className="h-4 w-4" />,
+              content: (
+                <DashboardSection
+                  id="mapping"
+                  title="Field mapping"
+                  icon={<Settings2 className="h-4 w-4" />}
+                  defaultOpen
+                  className="md:col-span-2"
+                >
+                  <StepMapping mapping={mapping} setMapping={setMapping} sampleTote={selectedTotes[0] ?? totes[0]} />
+                </DashboardSection>
+              ),
+            },
+            {
+              value: "connection",
+              label: "4. Connection",
+              icon: <Send className="h-4 w-4" />,
+              badge: client ? "connected" : undefined,
+              content: (
+                <DashboardSection
+                  id="connection"
+                  title="Homebox connection"
+                  icon={<Send className="h-4 w-4" />}
+                  badge={client ? "connected" : undefined}
+                  defaultOpen
+                  className="md:col-span-2"
+                >
+                  <ConnectionCard
+                    conn={conn}
+                    setConn={setConn}
+                    client={client}
+                    handleConnect={handleConnect}
+                    existingLocations={existingLocations}
+                    running={running}
+                  />
+                </DashboardSection>
+              ),
+            },
+            {
+              value: "import",
+              label: "5. Import",
+              icon: <Boxes className="h-4 w-4" />,
+              badge: running ? `${progress}%` : done ? "done" : undefined,
+              content: (
+                <DashboardSection
+                  id="import"
+                  title="Run import"
+                  icon={<Boxes className="h-4 w-4" />}
+                  badge={running ? `${progress}%` : done ? "done" : undefined}
+                  defaultOpen
+                  className="md:col-span-2"
+                >
+                  <ImportRunner
+                    client={client}
+                    totalTotes={selectedTotes.length}
+                    totalItems={totalItems}
+                    logs={logs}
+                    progress={progress}
+                    running={running}
+                    done={done}
+                    onRun={runImport}
+                  />
+                </DashboardSection>
+              ),
+            },
+            {
+              value: "diagnostics",
+              label: "Diagnostics",
+              icon: <Settings2 className="h-4 w-4" />,
+              badge: diagnostics.length > 0 ? String(diagnostics.length) : undefined,
+              content: (
+                <DashboardSection
+                  id="diagnostics"
+                  title="Diagnostics"
+                  icon={<Settings2 className="h-4 w-4" />}
+                  badge={diagnostics.length > 0 ? String(diagnostics.length) : undefined}
+                  defaultOpen
+                  className="md:col-span-2"
+                >
+                  <DiagnosticsPanel entries={diagnostics} onClear={() => setDiagnostics([])} client={client} />
+                </DashboardSection>
+              ),
+            },
+          ]}
+        />
       </main>
+    </div>
+  );
+}
+
+function AppTabs({
+  tabs,
+}: {
+  tabs: Array<{ value: string; label: string; icon?: ReactNode; badge?: string; content: ReactNode }>;
+}) {
+  const storageKey = "dash.activeTab";
+  const [active, setActive] = useState(tabs[0]?.value ?? "upload");
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw && tabs.some((t) => t.value === raw)) setActive(raw);
+    } catch {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, active);
+    } catch {
+      // ignore
+    }
+  }, [active]);
+
+  return (
+    <div>
+      <div role="tablist" className="mb-6 flex flex-wrap gap-1 border-b border-border">
+        {tabs.map((t) => {
+          const isActive = t.value === active;
+          return (
+            <button
+              key={t.value}
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => setActive(t.value)}
+              className={`-mb-px flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+                isActive
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {t.icon}
+              <span>{t.label}</span>
+              {t.badge ? (
+                <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-[10px]">
+                  {t.badge}
+                </Badge>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+      {tabs.map((t) => (
+        <div key={t.value} hidden={t.value !== active} className="grid gap-5 md:grid-cols-2">
+          {t.content}
+        </div>
+      ))}
     </div>
   );
 }
