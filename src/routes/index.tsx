@@ -609,8 +609,6 @@ function StepReview({
           );
         })}
       </div>
-
-      <NavButtons onBack={onBack} onNext={onNext} nextDisabled={selectedIds.size === 0} nextLabel="Configure mapping" />
     </div>
   );
 }
