@@ -504,6 +504,10 @@ function App() {
                     tagRules={tagRules}
                     setTagRules={setTagRules}
                     existingLabels={existingLabels}
+                    tagSourcesDraft={tagSourcesDraft}
+                    setTagSourcesDraft={setTagSourcesDraft}
+                    tagSources={tagSources}
+                    onRefresh={() => setTagSources(tagSourcesDraft)}
                   />
                 </DashboardSection>
               )}
