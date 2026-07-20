@@ -333,9 +333,10 @@ function App() {
         const qtyNum = qtyStr ? parseInt(qtyStr, 10) : item.quantity;
         const quantity = Number.isFinite(qtyNum) && qtyNum > 0 ? qtyNum : item.quantity;
         const assetId = mapping.itemAssetId ? renderTemplate(mapping.itemAssetId, itemVars).trim() : undefined;
-        const rawTagNames = mapping.itemTags
-          ? renderTemplate(mapping.itemTags, itemVars).split(",").map((s) => s.trim()).filter(Boolean)
-          : [];
+        const rawTagNames: string[] = [];
+        if (tagSources.title && tote.title.trim()) rawTagNames.push(tote.title.trim());
+        if (tagSources.location && tote.location.trim()) rawTagNames.push(tote.location.trim());
+        if (tagSources.profile && tote.profile.trim()) rawTagNames.push(tote.profile.trim());
         // Apply user-defined tag rules (skip / remap).
         const resolvedTagNames: string[] = [];
         for (const raw of rawTagNames) {
