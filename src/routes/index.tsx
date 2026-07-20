@@ -1324,3 +1324,128 @@ function DiagBlock({ label, body, tone }: { label: string; body: string; tone?: 
     </div>
   );
 }
+
+function StepTags({
+  distinctTags,
+  tagRules,
+  setTagRules,
+  existingLabels,
+}: {
+  distinctTags: Array<{ name: string; count: number }>;
+  tagRules: Record<string, { import: boolean; remapTo: string }>;
+  setTagRules: (r: Record<string, { import: boolean; remapTo: string }>) => void;
+  existingLabels: HomeboxLabel[];
+}) {
+  const [filter, setFilter] = useState("");
+
+  function setRule(name: string, patch: Partial<{ import: boolean; remapTo: string }>) {
+    const prev = tagRules[name] ?? { import: true, remapTo: "" };
+    setTagRules({ ...tagRules, [name]: { ...prev, ...patch } });
+  }
+
+  const filtered = distinctTags.filter((t) =>
+    !filter.trim() ? true : t.name.toLowerCase().includes(filter.trim().toLowerCase()),
+  );
+
+  const importedCount = distinctTags.filter((t) => (tagRules[t.name]?.import ?? true)).length;
+  const remappedCount = distinctTags.filter((t) => {
+    const r = tagRules[t.name];
+    return r && !r.import && r.remapTo.trim();
+  }).length;
+  const skippedCount = distinctTags.filter((t) => {
+    const r = tagRules[t.name];
+    return r && !r.import && !r.remapTo.trim();
+  }).length;
+
+  if (distinctTags.length === 0) {
+    return (
+      <EmptyHint text="Upload an export and configure the itemTags template in the Mapping tab to see distinct tags here." />
+    );
+  }
+
+  return (
+    <div>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">{distinctTags.length}</span> distinct ·{" "}
+          <span className="text-primary">{importedCount} imported</span> ·{" "}
+          <span>{remappedCount} remapped</span> ·{" "}
+          <span className="text-destructive">{skippedCount} skipped</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter tags…"
+            className="h-8 w-52 text-sm"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setTagRules({})}
+            disabled={Object.keys(tagRules).length === 0}
+          >
+            Reset all
+          </Button>
+        </div>
+      </div>
+
+      <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+        Turn a tag <span className="font-medium">off</span> to skip it during import. When off, type or pick
+        another tag name to <span className="font-medium">remap</span> every item that used the skipped tag
+        onto that replacement (e.g. drop <em>Front Porch</em> and remap onto <em>Porch</em>). Leave the
+        remap blank to drop the tag entirely.
+      </p>
+
+      <div className="overflow-hidden rounded-md border border-border/60">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/40 text-[11px] uppercase tracking-wider text-muted-foreground">
+            <tr>
+              <th className="px-3 py-2 text-left">Totescan tag</th>
+              <th className="px-3 py-2 text-left">Uses</th>
+              <th className="px-3 py-2 text-left">Import</th>
+              <th className="px-3 py-2 text-left">Remap to (when not imported)</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/60">
+            {filtered.map((t) => {
+              const rule = tagRules[t.name] ?? { import: true, remapTo: "" };
+              const willImport = rule.import;
+              return (
+                <tr key={t.name} className={willImport ? "" : "bg-background/60"}>
+                  <td className="px-3 py-2 font-medium">{t.name}</td>
+                  <td className="px-3 py-2 text-xs text-muted-foreground">{t.count}</td>
+                  <td className="px-3 py-2">
+                    <Switch
+                      checked={willImport}
+                      onCheckedChange={(v) => setRule(t.name, { import: v })}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <Input
+                      list="tag-remap-options"
+                      value={rule.remapTo}
+                      onChange={(e) => setRule(t.name, { remapTo: e.target.value })}
+                      disabled={willImport}
+                      placeholder={willImport ? "—" : "leave blank to drop"}
+                      className="h-8 text-sm"
+                    />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <datalist id="tag-remap-options">
+        {distinctTags.map((t) => (
+          <option key={`d-${t.name}`} value={t.name} />
+        ))}
+        {existingLabels.map((l) => (
+          <option key={`h-${l.id}`} value={l.name} />
+        ))}
+      </datalist>
+    </div>
+  );
+}
+
