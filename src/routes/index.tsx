@@ -1413,8 +1413,8 @@ function StepTags({
   onRefresh,
 }: {
   distinctTags: Array<{ name: string; count: number }>;
-  tagRules: Record<string, { import: boolean; remapTo: string }>;
-  setTagRules: (r: Record<string, { import: boolean; remapTo: string }>) => void;
+  tagRules: Record<string, { import: boolean; remapTo: string[] }>;
+  setTagRules: (r: Record<string, { import: boolean; remapTo: string[] }>) => void;
   existingLabels: HomeboxLabel[];
   tagSourcesDraft: TagSources;
   setTagSourcesDraft: (s: TagSources) => void;
@@ -1425,8 +1425,8 @@ function StepTags({
 
   const dirty = TAG_SOURCE_KEYS.some((k) => tagSourcesDraft[k] !== tagSources[k]);
 
-  function setRule(name: string, patch: Partial<{ import: boolean; remapTo: string }>) {
-    const prev = tagRules[name] ?? { import: true, remapTo: "" };
+  function setRule(name: string, patch: Partial<{ import: boolean; remapTo: string[] }>) {
+    const prev = tagRules[name] ?? { import: true, remapTo: [] as string[] };
     setTagRules({ ...tagRules, [name]: { ...prev, ...patch } });
   }
 
@@ -1437,11 +1437,11 @@ function StepTags({
   const importedCount = distinctTags.filter((t) => (tagRules[t.name]?.import ?? true)).length;
   const remappedCount = distinctTags.filter((t) => {
     const r = tagRules[t.name];
-    return r && !r.import && r.remapTo.trim();
+    return !!(r && !r.import && r.remapTo.length > 0);
   }).length;
   const skippedCount = distinctTags.filter((t) => {
     const r = tagRules[t.name];
-    return r && !r.import && !r.remapTo.trim();
+    return !!(r && !r.import && r.remapTo.length === 0);
   }).length;
 
   const sourcesBlock = (
