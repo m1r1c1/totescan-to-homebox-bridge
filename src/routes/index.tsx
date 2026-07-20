@@ -1402,6 +1402,84 @@ function DiagBlock({ label, body, tone }: { label: string; body: string; tone?: 
   );
 }
 
+function TagChipInput({
+  value,
+  onChange,
+  disabled,
+  placeholder,
+  datalistId,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  datalistId?: string;
+}) {
+  const [draft, setDraft] = useState("");
+
+  function commit(raw: string) {
+    const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parts.length === 0) return;
+    const merged = [...value];
+    for (const p of parts) {
+      if (!merged.some((x) => x.toLowerCase() === p.toLowerCase())) merged.push(p);
+    }
+    onChange(merged);
+    setDraft("");
+  }
+
+  function removeAt(i: number) {
+    const next = value.slice();
+    next.splice(i, 1);
+    onChange(next);
+  }
+
+  return (
+    <div
+      className={`flex min-h-8 flex-wrap items-center gap-1 rounded-md border border-input bg-background px-2 py-1 text-sm ${
+        disabled ? "opacity-50" : ""
+      }`}
+    >
+      {value.map((chip, i) => (
+        <span
+          key={`${chip}-${i}`}
+          className="inline-flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary"
+        >
+          {chip}
+          {!disabled && (
+            <button
+              type="button"
+              className="text-primary/70 hover:text-primary"
+              onClick={() => removeAt(i)}
+              aria-label={`Remove ${chip}`}
+            >
+              ×
+            </button>
+          )}
+        </span>
+      ))}
+      <input
+        list={datalistId}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === ",") {
+            e.preventDefault();
+            commit(draft);
+          } else if (e.key === "Backspace" && draft === "" && value.length > 0) {
+            e.preventDefault();
+            removeAt(value.length - 1);
+          }
+        }}
+        onBlur={() => { if (draft.trim()) commit(draft); }}
+        disabled={disabled}
+        placeholder={value.length === 0 ? placeholder : ""}
+        className="flex-1 min-w-[8ch] bg-transparent outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
+      />
+    </div>
+  );
+}
+
 function StepTags({
   distinctTags,
   tagRules,
