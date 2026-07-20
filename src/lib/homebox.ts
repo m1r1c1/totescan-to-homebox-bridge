@@ -197,7 +197,7 @@ export class HomeboxClient {
     });
     if (!r.ok) throw new Error(`Homebox login failed: ${r.status} ${await safeText(r)}`);
     const data = (await r.json()) as HomeboxLoginResponse;
-    this.token = data.token;
+    this.token = (data.token ?? "").replace(/^bearer\s+/i, "").trim();
     return data;
   }
 
