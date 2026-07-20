@@ -1518,5 +1518,131 @@ function StepTags({
       </datalist>
     </div>
   );
+
+function StepLocations({
+  distinctLocations,
+  locationRules,
+  setLocationRules,
+  existingLocations,
+}: {
+  distinctLocations: Array<{ name: string; totes: number; items: number }>;
+  locationRules: Record<string, { import: boolean; remapTo: string }>;
+  setLocationRules: (r: Record<string, { import: boolean; remapTo: string }>) => void;
+  existingLocations: HomeboxLocation[];
+}) {
+  const [filter, setFilter] = useState("");
+
+  function setRule(name: string, patch: Partial<{ import: boolean; remapTo: string }>) {
+    const prev = locationRules[name] ?? { import: true, remapTo: "" };
+    setLocationRules({ ...locationRules, [name]: { ...prev, ...patch } });
+  }
+
+  const filtered = distinctLocations.filter((l) =>
+    !filter.trim() ? true : l.name.toLowerCase().includes(filter.trim().toLowerCase()),
+  );
+
+  const importedCount = distinctLocations.filter((l) => (locationRules[l.name]?.import ?? true)).length;
+  const remappedCount = distinctLocations.filter((l) => {
+    const r = locationRules[l.name];
+    return r && !r.import && r.remapTo.trim();
+  }).length;
+  const skippedCount = distinctLocations.filter((l) => {
+    const r = locationRules[l.name];
+    return r && !r.import && !r.remapTo.trim();
+  }).length;
+
+  if (distinctLocations.length === 0) {
+    return (
+      <EmptyHint text="Upload an export (and set the Location name template in Mapping) to see distinct locations here." />
+    );
+  }
+
+  return (
+    <div>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">{distinctLocations.length}</span> distinct ·{" "}
+          <span className="text-primary">{importedCount} imported</span> ·{" "}
+          <span>{remappedCount} remapped</span> ·{" "}
+          <span className="text-destructive">{skippedCount} skipped</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter locations…"
+            className="h-8 w-52 text-sm"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setLocationRules({})}
+            disabled={Object.keys(locationRules).length === 0}
+          >
+            Reset all
+          </Button>
+        </div>
+      </div>
+
+      <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+        Turn a location <span className="font-medium">off</span> to skip it during import. When off, type
+        or pick another location name to <span className="font-medium">remap</span> every tote using that
+        location onto the replacement (existing Homebox locations autocomplete). Leave the remap blank to
+        skip the tote and its items entirely.
+      </p>
+
+      <div className="overflow-hidden rounded-md border border-border/60">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/40 text-[11px] uppercase tracking-wider text-muted-foreground">
+            <tr>
+              <th className="px-3 py-2 text-left">Totescan location</th>
+              <th className="px-3 py-2 text-left">Totes</th>
+              <th className="px-3 py-2 text-left">Items</th>
+              <th className="px-3 py-2 text-left">Import</th>
+              <th className="px-3 py-2 text-left">Remap to (when not imported)</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/60">
+            {filtered.map((l) => {
+              const rule = locationRules[l.name] ?? { import: true, remapTo: "" };
+              const willImport = rule.import;
+              return (
+                <tr key={l.name} className={willImport ? "" : "bg-background/60"}>
+                  <td className="px-3 py-2 font-medium">{l.name}</td>
+                  <td className="px-3 py-2 text-xs text-muted-foreground">{l.totes}</td>
+                  <td className="px-3 py-2 text-xs text-muted-foreground">{l.items}</td>
+                  <td className="px-3 py-2">
+                    <Switch
+                      checked={willImport}
+                      onCheckedChange={(v) => setRule(l.name, { import: v })}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <Input
+                      list="location-remap-options"
+                      value={rule.remapTo}
+                      onChange={(e) => setRule(l.name, { remapTo: e.target.value })}
+                      disabled={willImport}
+                      placeholder={willImport ? "—" : "leave blank to skip tote"}
+                      className="h-8 text-sm"
+                    />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <datalist id="location-remap-options">
+        {distinctLocations.map((l) => (
+          <option key={`d-${l.name}`} value={l.name} />
+        ))}
+        {existingLocations.map((l) => (
+          <option key={`h-${l.id}`} value={l.name} />
+        ))}
+      </datalist>
+    </div>
+  );
 }
+
 
