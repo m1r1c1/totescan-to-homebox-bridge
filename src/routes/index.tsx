@@ -46,6 +46,7 @@ interface LogEntry {
 function App() {
   const [step, setStep] = useState<Step>(1);
   const [totes, setTotes] = useState<ParsedTote[]>([]);
+  const [embedded, setEmbedded] = useState<EmbeddedPartsMap>(new Map());
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [mapping, setMapping] = useState<MappingConfig>(DEFAULT_MAPPING);
   const [conn, setConn] = useState({ baseUrl: "", username: "", password: "", token: "" });
