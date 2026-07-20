@@ -1434,9 +1434,35 @@ function StepTags({
     return r && !r.import && !r.remapTo.trim();
   }).length;
 
+  const sourcesBlock = (
+    <div className="mb-4 flex flex-wrap items-center gap-4 rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+      <div className="text-xs font-medium text-muted-foreground">Tag sources:</div>
+      {TAG_SOURCE_KEYS.map((k) => (
+        <label key={k} className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-primary"
+            checked={tagSourcesDraft[k]}
+            onChange={(e) => setTagSourcesDraft({ ...tagSourcesDraft, [k]: e.target.checked })}
+          />
+          {TAG_SOURCE_LABELS[k]}
+        </label>
+      ))}
+      <div className="ml-auto flex items-center gap-2">
+        {dirty && <span className="text-[11px] text-muted-foreground">unsaved changes</span>}
+        <Button size="sm" variant={dirty ? "default" : "outline"} onClick={onRefresh} disabled={!dirty}>
+          Refresh
+        </Button>
+      </div>
+    </div>
+  );
+
   if (distinctTags.length === 0) {
     return (
-      <EmptyHint text="Upload an export and configure the itemTags template in the Mapping tab to see distinct tags here." />
+      <div>
+        {sourcesBlock}
+        <EmptyHint text="Upload an export and enable at least one tag source above to see distinct tags here." />
+      </div>
     );
   }
 
