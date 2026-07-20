@@ -335,33 +335,63 @@ export class HomeboxClient {
     if (!r.ok) throw new Error(`Update item failed: ${r.status} ${await safeText(r)}`);
   }
 
-  // Fetch every existing item entity and index them by their import_ref custom field
-  // so re-runs can skip previously-imported items.
-  async indexItemsByImportRef(): Promise<Map<string, ExistingItemIndex>> {
+  // Index existing items by their `import_ref` custom field so re-runs can
+  // skip previously-imported items. EntitySummary from the list endpoint does
+  // NOT include the `fields` array (per Homebox swagger), so we must fetch
+  // each item's full entity to read custom fields. Done in small parallel
+  // batches to avoid hammering the server.
+  async indexItemsByImportRef(
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<Map<string, ExistingItemIndex>> {
     if (!this.itemTypeId) await this.ensureEntityTypes();
     const index = new Map<string, ExistingItemIndex>();
+
+    // 1) Collect all item-type entity summaries (id + name only).
+    const summaries: Array<{ id: string; name: string }> = [];
     let page = 1;
     while (true) {
       const r = await this.request("GET", `/api/v1/entities?page=${page}&pageSize=500`);
       if (!r.ok) throw new Error(`List entities failed: ${r.status}`);
       const body = await r.json();
-      const items: Array<{
-        id: string;
-        name: string;
-        entityType?: { id?: string };
-        fields?: Array<{ name?: string; textValue?: string }>;
-      }> = Array.isArray(body) ? body : (body.items ?? []);
+      const items: Array<{ id: string; name: string; entityType?: { id?: string } }> =
+        Array.isArray(body) ? body : (body.items ?? []);
       for (const it of items) {
-        if (it.entityType?.id !== this.itemTypeId) continue;
-        const ref = Array.isArray(it.fields)
-          ? it.fields.find((f) => (f.name ?? "").toLowerCase() === "import_ref")?.textValue
-          : undefined;
-        if (ref) index.set(ref, { id: it.id, name: it.name, importRef: ref });
+        if (it.entityType?.id === this.itemTypeId) summaries.push({ id: it.id, name: it.name });
       }
       const total = body?.total ?? items.length;
       if (page * 500 >= total || items.length === 0) break;
       page++;
     }
+
+    // 2) Fetch full details in batches of 8 and pluck `import_ref`.
+    const BATCH = 8;
+    let done = 0;
+    for (let i = 0; i < summaries.length; i += BATCH) {
+      const chunk = summaries.slice(i, i + BATCH);
+      const results = await Promise.all(
+        chunk.map(async (s) => {
+          try {
+            const r = await this.request("GET", `/api/v1/entities/${s.id}`);
+            if (!r.ok) return null;
+            const full = (await r.json()) as {
+              id: string;
+              name: string;
+              fields?: Array<{ name?: string; textValue?: string }>;
+            };
+            const ref = Array.isArray(full.fields)
+              ? full.fields.find((f) => (f.name ?? "").toLowerCase() === "import_ref")?.textValue
+              : undefined;
+            return ref ? { id: full.id, name: full.name, importRef: ref } : null;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      for (const r of results) if (r) index.set(r.importRef!, r);
+      done += chunk.length;
+      onProgress?.(done, summaries.length);
+    }
+
     return index;
   }
 
