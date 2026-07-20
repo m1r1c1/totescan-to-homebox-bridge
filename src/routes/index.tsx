@@ -11,8 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
-import { parseTotescanFile, renderTemplate, type ParsedTote } from "@/lib/mhtml";
-import { HomeboxClient, fetchImageAsBlob, type HomeboxLocation, type HomeboxLabel, type DiagnosticEntry, type HomeboxCustomField, type ExistingItemIndex } from "@/lib/homebox";
+import { parseTotescanFile, renderTemplate, resolveImageBlob, type ParsedTote, type EmbeddedPartsMap } from "@/lib/mhtml";
+import { HomeboxClient, type HomeboxLocation, type HomeboxLabel, type DiagnosticEntry, type HomeboxCustomField, type ExistingItemIndex } from "@/lib/homebox";
 import { DEFAULT_MAPPING, TOTE_VARIABLES, ITEM_VARIABLES, buildImportRef, type MappingConfig, type CustomFieldMapping } from "@/lib/mapping";
 import { Trash2, Plus } from "lucide-react";
 
@@ -46,6 +46,7 @@ interface LogEntry {
 function App() {
   const [step, setStep] = useState<Step>(1);
   const [totes, setTotes] = useState<ParsedTote[]>([]);
+  const [embedded, setEmbedded] = useState<EmbeddedPartsMap>(new Map());
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [mapping, setMapping] = useState<MappingConfig>(DEFAULT_MAPPING);
   const [conn, setConn] = useState({ baseUrl: "", username: "", password: "", token: "" });
@@ -70,14 +71,16 @@ function App() {
   async function handleFile(file: File) {
     try {
       const parsed = await parseTotescanFile(file);
-      if (parsed.length === 0) {
+      if (parsed.totes.length === 0) {
         toast.error("No totes found in that file. Is it a Totescan MHTML export?");
         return;
       }
-      setTotes(parsed);
-      setSelectedIds(new Set(parsed.map((t) => t.toteId)));
+      setTotes(parsed.totes);
+      setEmbedded(parsed.embedded);
+      setSelectedIds(new Set(parsed.totes.map((t) => t.toteId)));
       setStep(2);
-      toast.success(`Parsed ${parsed.length} totes with ${parsed.reduce((n, t) => n + t.items.length, 0)} items.`);
+      const itemCount = parsed.totes.reduce((n, t) => n + t.items.length, 0);
+      toast.success(`Parsed ${parsed.totes.length} totes, ${itemCount} items, ${parsed.embedded.size} embedded images.`);
     } catch (e) {
       toast.error(`Failed to parse: ${(e as Error).message}`);
     }
@@ -269,13 +272,13 @@ function App() {
             let primaryAssigned = false;
             for (const url of item.imageUrls) {
               try {
-                const blob = await fetchImageAsBlob(url);
+                const { blob, source } = await resolveImageBlob(url, embedded);
                 const filename = url.split("/").pop()?.split("?")[0] ?? "photo.jpg";
                 const isPrimary = !primaryAssigned;
-                client.setPhase(`import:uploadAttachment "${filename}"`);
+                client.setPhase(`import:uploadAttachment "${filename}" (${source})`);
                 await client.uploadAttachment(created.id, blob, filename, "photo", isPrimary);
                 primaryAssigned = true;
-                log({ level: "ok", text: `      photo ${filename}${isPrimary ? " (primary)" : ""}` });
+                log({ level: "ok", text: `      photo ${filename} [${source}]${isPrimary ? " (primary)" : ""}` });
               } catch (e) {
                 log({ level: "error", text: `      photo failed (${url}): ${(e as Error).message}` });
               }
