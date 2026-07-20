@@ -37,15 +37,12 @@ export const Route = createFileRoute("/")({
   component: App,
 });
 
-type Step = 1 | 2 | 3 | 4;
-
 interface LogEntry {
   level: "info" | "ok" | "error";
   text: string;
 }
 
 function App() {
-  const [step, setStep] = useState<Step>(1);
   const [totes, setTotes] = useState<ParsedTote[]>([]);
   const [embedded, setEmbedded] = useState<EmbeddedPartsMap>(new Map());
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
