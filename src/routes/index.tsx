@@ -85,14 +85,22 @@ function App() {
   async function handleConnect() {
     if (!conn.baseUrl) return toast.error("Homebox URL is required.");
     const c = new HomeboxClient(conn.baseUrl);
+    c.onDiagnostic = (entry) => setDiagnostics((prev) => [...prev, entry]);
+    setDiagnostics([]);
     try {
+      c.setPhase("connect:login");
       if (conn.token) {
         c.token = conn.token;
       } else {
         await c.login(conn.username, conn.password);
       }
+      c.setPhase("connect:entity-types");
       await c.ensureEntityTypes();
-      const [locs, labels] = await Promise.all([c.listLocations(), c.listLabels().catch(() => [])]);
+      c.setPhase("connect:list-locations");
+      const locs = await c.listLocations();
+      c.setPhase("connect:list-tags");
+      const labels = await c.listLabels().catch(() => [] as HomeboxLabel[]);
+      c.setPhase("idle");
       setClient(c);
       setExistingLocations(locs);
       setExistingLabels(labels);
