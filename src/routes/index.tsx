@@ -600,6 +600,13 @@ function App() {
                     locationRules={locationRules}
                     setLocationRules={setLocationRules}
                     existingLocations={existingLocations}
+                    locationSourcesDraft={locationSourcesDraft}
+                    setLocationSourcesDraft={setLocationSourcesDraft}
+                    locationSources={locationSources}
+                    onRefresh={() => setLocationSources(locationSourcesDraft)}
+                    conflicts={locationConflicts}
+                    conflictRules={locationConflictRules}
+                    setConflictRules={setLocationConflictRules}
                   />
                 </DashboardSection>
               )}
