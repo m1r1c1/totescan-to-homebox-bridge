@@ -222,3 +222,24 @@ export function renderTemplate(template: string, vars: Record<string, string | n
     return v === undefined || v === null ? "" : String(v);
   });
 }
+
+/**
+ * Resolve an image URL to a Blob. Tries the embedded MHTML parts first
+ * (no network, no CORS), then falls back to our server-side image proxy
+ * which fetches from the origin (e.g. Totescan's S3) without browser CORS.
+ */
+export async function resolveImageBlob(
+  url: string,
+  embedded: EmbeddedPartsMap,
+): Promise<{ blob: Blob; source: "embedded" | "proxy" }> {
+  const part = embedded.get(url);
+  if (part) {
+    // Copy into a fresh ArrayBuffer so the Blob owns contiguous memory.
+    const buf = new ArrayBuffer(part.bytes.byteLength);
+    new Uint8Array(buf).set(part.bytes);
+    return { blob: new Blob([buf], { type: part.contentType }), source: "embedded" };
+  }
+  const r = await fetch(`/api/public/image-proxy?url=${encodeURIComponent(url)}`);
+  if (!r.ok) throw new Error(`proxy fetch ${r.status}`);
+  return { blob: await r.blob(), source: "proxy" };
+}
