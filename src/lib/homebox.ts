@@ -248,7 +248,13 @@ export class HomeboxClient {
     return (await r.json()) as HomeboxEntityType;
   }
 
-  private async listEntitiesByType(typeId: string): Promise<Array<{ id: string; name: string; description?: string }>> {
+  // Filters by a predicate against the entity's type. Homebox allows many
+  // entity types with isLocation=true (Room, Shelf, Box, …) or with
+  // isLocation=false (Item, Tool, …), so filtering by a single typeId misses
+  // most entities. Predicate lets callers match by isLocation flag instead.
+  private async listEntitiesWhere(
+    match: (t: { id?: string; isLocation?: boolean } | undefined) => boolean,
+  ): Promise<Array<{ id: string; name: string; description?: string }>> {
     const results: Array<{ id: string; name: string; description?: string }> = [];
     let page = 1;
     while (true) {
@@ -258,7 +264,7 @@ export class HomeboxClient {
       const items: Array<{ id: string; name: string; description?: string; entityType?: { id?: string; isLocation?: boolean } }> =
         Array.isArray(body) ? body : (body.items ?? []);
       for (const it of items) {
-        if (it.entityType?.id === typeId) results.push({ id: it.id, name: it.name, description: it.description });
+        if (match(it.entityType)) results.push({ id: it.id, name: it.name, description: it.description });
       }
       const total = body?.total ?? items.length;
       if (page * 500 >= total || items.length === 0) break;
@@ -269,7 +275,7 @@ export class HomeboxClient {
 
   async listLocations(): Promise<HomeboxLocation[]> {
     if (!this.locationTypeId) await this.ensureEntityTypes();
-    return this.listEntitiesByType(this.locationTypeId!);
+    return this.listEntitiesWhere((t) => !!t?.isLocation);
   }
 
   async createLocation(name: string, description = ""): Promise<HomeboxLocation> {
