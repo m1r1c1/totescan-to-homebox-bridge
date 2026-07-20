@@ -540,7 +540,7 @@ function App() {
             },
             {
               value: "import",
-              label: "6. Import",
+              label: "7. Import",
               icon: <Boxes className="h-4 w-4" />,
               badge: running ? `${progress}%` : done ? "done" : undefined,
               content: (
