@@ -891,11 +891,45 @@ function StepImport({
   );
 }
 
-function DiagnosticsPanel({ entries, onClear }: { entries: DiagnosticEntry[]; onClear: () => void }) {
+function DiagnosticsPanel({ entries, onClear, client }: { entries: DiagnosticEntry[]; onClear: () => void; client: HomeboxClient | null }) {
   const [openId, setOpenId] = useState<number | null>(null);
   const [onlyErrors, setOnlyErrors] = useState(false);
+  const [cookieTest, setCookieTest] = useState<{ status: number; ok: boolean } | null>(null);
+  const [testing, setTesting] = useState(false);
   const filtered = onlyErrors ? entries.filter((e) => !e.ok) : entries;
   const errCount = entries.filter((e) => !e.ok).length;
+
+  // Cookie diagnostics summary (best-effort — browsers hide Set-Cookie and the
+  // Cookie header from JS for cross-origin fetches, so we infer from what we
+  // CAN see and offer an explicit cookie-only auth probe).
+  const loginEntry = [...entries].reverse().find((e) => /users\/login/.test(e.url));
+  const lastEntry = entries[entries.length - 1];
+  const setCookieVisible = loginEntry?.responseHeaders?.["set-cookie"];
+  const acaCredentials =
+    loginEntry?.responseHeaders?.["access-control-allow-credentials"] ??
+    lastEntry?.responseHeaders?.["access-control-allow-credentials"];
+  const acaOrigin =
+    loginEntry?.responseHeaders?.["access-control-allow-origin"] ??
+    lastEntry?.responseHeaders?.["access-control-allow-origin"];
+  const visibleHbCookies =
+    typeof document !== "undefined"
+      ? document.cookie.split(";").map((c) => c.trim()).filter((c) => c.startsWith("hb.auth."))
+      : [];
+
+  async function runCookieTest() {
+    if (!client) return;
+    setTesting(true);
+    try {
+      const r = await client.testCookieOnlyAuth();
+      setCookieTest(r);
+      if (r.ok) toast.success("Cookie-only auth succeeded");
+      else toast.error(`Cookie-only auth failed (${r.status})`);
+    } catch (e) {
+      toast.error(`Test failed: ${(e as Error).message}`);
+    } finally {
+      setTesting(false);
+    }
+  }
 
   function copyAll() {
     const text = entries
