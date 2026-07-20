@@ -56,6 +56,20 @@ function App() {
   const [progress, setProgress] = useState(0);
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
+  // Tag rules: keyed by the raw tag value produced by the itemTags template.
+  // `import` false + `remapTo` empty = drop the tag entirely.
+  // `import` false + `remapTo` set = replace with that tag name.
+  // `import` true = pass through unchanged.
+  const [tagRules, setTagRules] = useState<Record<string, { import: boolean; remapTo: string }>>(() => {
+    try {
+      const raw = localStorage.getItem("dash.tagRules");
+      if (raw) return JSON.parse(raw);
+    } catch { /* ignore */ }
+    return {};
+  });
+  useEffect(() => {
+    try { localStorage.setItem("dash.tagRules", JSON.stringify(tagRules)); } catch { /* ignore */ }
+  }, [tagRules]);
 
   const selectedTotes = useMemo(
     () => totes.filter((t) => selectedIds.has(t.toteId)),
