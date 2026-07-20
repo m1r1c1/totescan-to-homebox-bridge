@@ -90,11 +90,12 @@ function App() {
       } else {
         await c.login(conn.username, conn.password);
       }
+      await c.ensureEntityTypes();
       const [locs, labels] = await Promise.all([c.listLocations(), c.listLabels().catch(() => [])]);
       setClient(c);
       setExistingLocations(locs);
       setExistingLabels(labels);
-      toast.success(`Connected. Found ${locs.length} locations, ${labels.length} labels.`);
+      toast.success(`Connected. Found ${locs.length} locations, ${labels.length} tags.`);
     } catch (e) {
       toast.error(`Connection failed: ${(e as Error).message}. Check the URL, credentials, and CORS on your Homebox instance.`);
     }
