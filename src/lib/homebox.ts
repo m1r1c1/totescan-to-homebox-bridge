@@ -273,9 +273,32 @@ export class HomeboxClient {
     return results;
   }
 
+  // Homebox's /v1/entities endpoint returns items only (locations are excluded
+  // even though they're technically entities). The dedicated
+  // /v1/entities/tree endpoint — "Get Locations Tree" per swagger — returns
+  // the full location hierarchy. We flatten it so the UI still gets a flat
+  // list of {id, name} for the dropdown.
   async listLocations(): Promise<HomeboxLocation[]> {
-    if (!this.locationTypeId) await this.ensureEntityTypes();
-    return this.listEntitiesWhere((t) => !!t?.isLocation);
+    const r = await this.request("GET", `/api/v1/entities/tree?withItems=false`);
+    if (!r.ok) throw new Error(`List locations failed: ${r.status} ${await safeText(r)}`);
+    const tree = (await r.json()) as Array<{
+      id: string;
+      name: string;
+      type?: string;
+      children?: unknown[];
+    }>;
+    const out: HomeboxLocation[] = [];
+    const walk = (nodes: typeof tree, prefix = "") => {
+      for (const n of nodes ?? []) {
+        const displayName = prefix ? `${prefix} / ${n.name}` : n.name;
+        out.push({ id: n.id, name: displayName });
+        if (Array.isArray(n.children) && n.children.length > 0) {
+          walk(n.children as typeof tree, displayName);
+        }
+      }
+    };
+    walk(Array.isArray(tree) ? tree : []);
+    return out;
   }
 
   async createLocation(name: string, description = ""): Promise<HomeboxLocation> {
