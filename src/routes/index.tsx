@@ -831,127 +831,113 @@ function MappingField({
   );
 }
 
-function StepImport({
+function ConnectionCard({
   conn,
   setConn,
   client,
   handleConnect,
   existingLocations,
-  totalTotes,
-  totalItems,
-  logs,
-  diagnostics,
-  homeboxClient,
-  onClearDiagnostics,
-  progress,
   running,
-  done,
-  onBack,
-  onRun,
 }: {
   conn: { baseUrl: string; username: string; password: string; token: string };
   setConn: (c: { baseUrl: string; username: string; password: string; token: string }) => void;
   client: HomeboxClient | null;
   handleConnect: () => void;
   existingLocations: HomeboxLocation[];
-  totalTotes: number;
-  totalItems: number;
-  logs: LogEntry[];
-  diagnostics: DiagnosticEntry[];
-  homeboxClient: HomeboxClient | null;
-  onClearDiagnostics: () => void;
-  progress: number;
   running: boolean;
-  done: boolean;
-  onBack: () => void;
-  onRun: () => void;
 }) {
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-      <section className="rounded-lg border border-border bg-card p-5">
-        <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold">
-          <Send className="h-5 w-5 text-primary" /> Homebox connection
-        </h2>
-        <div className="space-y-3">
-          <div>
-            <Label className="mb-1.5 block text-xs uppercase tracking-wide text-muted-foreground">Homebox URL</Label>
-            <Input placeholder="https://homebox.local" value={conn.baseUrl} onChange={(e) => setConn({ ...conn, baseUrl: e.target.value })} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="mb-1.5 block text-xs uppercase tracking-wide text-muted-foreground">Username</Label>
-              <Input value={conn.username} onChange={(e) => setConn({ ...conn, username: e.target.value })} />
-            </div>
-            <div>
-              <Label className="mb-1.5 block text-xs uppercase tracking-wide text-muted-foreground">Password</Label>
-              <Input type="password" value={conn.password} onChange={(e) => setConn({ ...conn, password: e.target.value })} />
-            </div>
-          </div>
-          <Button className="w-full" onClick={handleConnect} disabled={running}>
-            {client ? "Reconnect" : "Connect"}
-          </Button>
-          {client && (
-            <div className="rounded-md border border-primary/40 bg-primary/10 p-3 text-xs">
-              <p className="font-medium text-primary">Connected</p>
-              <p className="mt-0.5 text-muted-foreground">
-                {existingLocations.length} existing locations on server.
-              </p>
-            </div>
-          )}
+    <div className="space-y-3">
+      <div>
+        <Label className="mb-1.5 block text-xs uppercase tracking-wide text-muted-foreground">Homebox URL</Label>
+        <Input placeholder="https://homebox.local" value={conn.baseUrl} onChange={(e) => setConn({ ...conn, baseUrl: e.target.value })} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <Label className="mb-1.5 block text-xs uppercase tracking-wide text-muted-foreground">Username</Label>
+          <Input value={conn.username} onChange={(e) => setConn({ ...conn, username: e.target.value })} />
         </div>
-
-        <div className="mt-6 rounded-md border border-border/60 bg-background/60 p-3 text-sm">
-          <p className="mb-2 font-medium">Ready to import</p>
-          <ul className="space-y-1 text-muted-foreground">
-            <li>{totalTotes} totes → locations</li>
-            <li>{totalItems} items</li>
-          </ul>
+        <div>
+          <Label className="mb-1.5 block text-xs uppercase tracking-wide text-muted-foreground">Password</Label>
+          <Input type="password" value={conn.password} onChange={(e) => setConn({ ...conn, password: e.target.value })} />
         </div>
-
-        <Button className="mt-4 w-full" size="lg" onClick={onRun} disabled={!client || running || totalItems === 0}>
-          {running ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Importing…</> : done ? "Run again" : "Start import"}
-        </Button>
-
-        <p className="mt-4 text-[11px] leading-relaxed text-muted-foreground">
-          Note: this app calls the Homebox API directly from your browser. If you see CORS errors, make sure your Homebox instance allows requests from this app's origin (or run both on the same host).
-        </p>
-      </section>
-
-      <section className="space-y-6">
-        <div className="rounded-lg border border-border bg-card p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-xl font-semibold">Progress</h2>
-            <span className="text-sm text-muted-foreground">{progress}%</span>
-          </div>
-          <Progress value={progress} className="mb-4" />
-          <ScrollArea className="h-[280px] rounded border border-border/60 bg-background/60 p-3 font-mono text-xs">
-            {logs.length === 0 ? (
-              <p className="text-muted-foreground">Logs will appear here once the import starts.</p>
-            ) : (
-              <ul className="space-y-1">
-                {logs.map((l, i) => (
-                  <li key={i} className="flex gap-2">
-                    {l.level === "ok" && <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />}
-                    {l.level === "error" && <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />}
-                    {l.level === "info" && <div className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
-                    <span className={l.level === "error" ? "text-destructive" : "text-foreground/90"}>{l.text}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </ScrollArea>
-          <div className="mt-4 flex">
-            <Button variant="outline" onClick={onBack} disabled={running}>
-              <ArrowLeft className="mr-2 h-4 w-4" /> Back
-            </Button>
-          </div>
+      </div>
+      <Button className="w-full" onClick={handleConnect} disabled={running}>
+        {client ? "Reconnect" : "Connect"}
+      </Button>
+      {client && (
+        <div className="rounded-md border border-primary/40 bg-primary/10 p-3 text-xs">
+          <p className="font-medium text-primary">Connected</p>
+          <p className="mt-0.5 text-muted-foreground">
+            {existingLocations.length} existing locations on server.
+          </p>
         </div>
-
-        <DiagnosticsPanel entries={diagnostics} onClear={onClearDiagnostics} client={homeboxClient} />
-      </section>
+      )}
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        This app calls the Homebox API directly from your browser. If you see CORS errors, make sure your Homebox instance allows requests from this app's origin.
+      </p>
     </div>
   );
 }
+
+function ImportRunner({
+  client,
+  totalTotes,
+  totalItems,
+  logs,
+  progress,
+  running,
+  done,
+  onRun,
+}: {
+  client: HomeboxClient | null;
+  totalTotes: number;
+  totalItems: number;
+  logs: LogEntry[];
+  progress: number;
+  running: boolean;
+  done: boolean;
+  onRun: () => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="rounded-md border border-border/60 bg-background/60 p-3 text-sm">
+        <p className="mb-2 font-medium">Ready to import</p>
+        <ul className="space-y-1 text-muted-foreground">
+          <li>{totalTotes} totes → locations</li>
+          <li>{totalItems} items</li>
+        </ul>
+      </div>
+      <Button className="w-full" size="lg" onClick={onRun} disabled={!client || running || totalItems === 0}>
+        {running ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Importing…</> : done ? "Run again" : "Start import"}
+      </Button>
+      <div>
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Progress</span>
+          <span className="text-xs text-muted-foreground">{progress}%</span>
+        </div>
+        <Progress value={progress} className="mb-3" />
+        <ScrollArea className="h-[280px] rounded border border-border/60 bg-background/60 p-3 font-mono text-xs">
+          {logs.length === 0 ? (
+            <p className="text-muted-foreground">Logs will appear here once the import starts.</p>
+          ) : (
+            <ul className="space-y-1">
+              {logs.map((l, i) => (
+                <li key={i} className="flex gap-2">
+                  {l.level === "ok" && <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />}
+                  {l.level === "error" && <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />}
+                  {l.level === "info" && <div className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+                  <span className={l.level === "error" ? "text-destructive" : "text-foreground/90"}>{l.text}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </ScrollArea>
+      </div>
+    </div>
+  );
+}
+
 
 function DiagnosticsPanel({ entries, onClear, client }: { entries: DiagnosticEntry[]; onClear: () => void; client: HomeboxClient | null }) {
   const [openId, setOpenId] = useState<number | null>(null);
