@@ -76,7 +76,6 @@ function App() {
       setTotes(parsed.totes);
       setEmbedded(parsed.embedded);
       setSelectedIds(new Set(parsed.totes.map((t) => t.toteId)));
-      setStep(2);
       const itemCount = parsed.totes.reduce((n, t) => n + t.items.length, 0);
       toast.success(`Parsed ${parsed.totes.length} totes, ${itemCount} items, ${parsed.embedded.size} embedded images.`);
     } catch (e) {
