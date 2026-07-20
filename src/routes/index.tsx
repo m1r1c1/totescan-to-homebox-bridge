@@ -141,6 +141,7 @@ function App() {
         let label = labelsByName.get(key);
         if (!label && mapping.createMissingTags) {
           try {
+            client!.setPhase(`import:createTag "${name}"`);
             label = await client!.createLabel(name);
             labelsByName.set(key, label);
             log({ level: "ok", text: `  ~ Created tag "${name}"` });
