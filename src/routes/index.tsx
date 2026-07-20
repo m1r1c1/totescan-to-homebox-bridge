@@ -50,6 +50,59 @@ const TAG_SOURCE_LABELS: Record<keyof TagSources, string> = {
   profile: "Profile",
 };
 
+type LocationSources = TagSources;
+// Priority order used to pick a default when multiple sources have values.
+const LOCATION_SOURCE_KEYS: Array<keyof LocationSources> = ["location", "title", "profile"];
+const LOCATION_SOURCE_LABELS: Record<keyof LocationSources, string> = TAG_SOURCE_LABELS;
+const DEFAULT_LOCATION_SOURCES: LocationSources = { title: true, location: true, profile: true };
+
+interface LocationCandidate { src: keyof LocationSources; value: string }
+function locationCandidatesFor(
+  tote: { title: string; location: string; profile: string },
+  sources: LocationSources,
+): LocationCandidate[] {
+  const out: LocationCandidate[] = [];
+  for (const k of LOCATION_SOURCE_KEYS) {
+    if (!sources[k]) continue;
+    const v = (tote[k] ?? "").trim();
+    if (v) out.push({ src: k, value: v });
+  }
+  return out;
+}
+function locationConflictKey(
+  tote: { title: string; location: string; profile: string },
+  sources: LocationSources,
+): string {
+  return LOCATION_SOURCE_KEYS
+    .filter((k) => sources[k])
+    .map((k) => `${k}:${(tote[k] ?? "").trim()}`)
+    .join("|");
+}
+function pickLocationName(
+  tote: { toteId: string; title: string; location: string; profile: string; parentToteId: string; dateUpdated: string },
+  sources: LocationSources,
+  conflictRules: Record<string, keyof LocationSources>,
+  mapping: MappingConfig,
+): string {
+  const cands = locationCandidatesFor(tote, sources);
+  if (cands.length === 0) {
+    const toteVars = {
+      toteId: tote.toteId, title: tote.title, location: tote.location,
+      profile: tote.profile, parentToteId: tote.parentToteId, dateUpdated: tote.dateUpdated,
+    };
+    return renderTemplate(mapping.locationName, toteVars).trim() || tote.title || tote.toteId;
+  }
+  const distinct = Array.from(new Set(cands.map((c) => c.value)));
+  if (distinct.length === 1) return cands[0].value;
+  const key = locationConflictKey(tote, sources);
+  const chosen = conflictRules[key];
+  if (chosen) {
+    const found = cands.find((c) => c.src === chosen);
+    if (found) return found.value;
+  }
+  return cands[0].value;
+}
+
 function App() {
   const [totes, setTotes] = useState<ParsedTote[]>([]);
   const [embedded, setEmbedded] = useState<EmbeddedPartsMap>(new Map());
@@ -120,6 +173,35 @@ function App() {
     try { localStorage.setItem("dash.locationRules", JSON.stringify(locationRules)); } catch { /* ignore */ }
   }, [locationRules]);
 
+  // Location sources (which Totescan fields feed location names). Same
+  // draft-then-Refresh pattern as tag sources so partially-configured rows
+  // aren't disrupted mid-edit.
+  const [locationSources, setLocationSources] = useState<LocationSources>(() => {
+    try {
+      const raw = localStorage.getItem("dash.locationSources");
+      if (raw) return { ...DEFAULT_LOCATION_SOURCES, ...JSON.parse(raw) };
+    } catch { /* ignore */ }
+    return DEFAULT_LOCATION_SOURCES;
+  });
+  const [locationSourcesDraft, setLocationSourcesDraft] = useState<LocationSources>(locationSources);
+  useEffect(() => {
+    try { localStorage.setItem("dash.locationSources", JSON.stringify(locationSources)); } catch { /* ignore */ }
+  }, [locationSources]);
+
+  // Per-conflict override: when a tote has 2+ enabled sources with different
+  // values, this maps the conflict key → chosen source key. Default pick is
+  // priority-order (Location → Title → Profile).
+  const [locationConflictRules, setLocationConflictRules] = useState<Record<string, keyof LocationSources>>(() => {
+    try {
+      const raw = localStorage.getItem("dash.locationConflictRules");
+      if (raw) return JSON.parse(raw);
+    } catch { /* ignore */ }
+    return {};
+  });
+  useEffect(() => {
+    try { localStorage.setItem("dash.locationConflictRules", JSON.stringify(locationConflictRules)); } catch { /* ignore */ }
+  }, [locationConflictRules]);
+
   const selectedTotes = useMemo(
     () => totes.filter((t) => selectedIds.has(t.toteId)),
     [totes, selectedIds],
@@ -150,23 +232,44 @@ function App() {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [totes, tagSources]);
 
-  // Distinct location names rendered from the current locationName template
-  // across all parsed totes, with item counts for context.
+  // Distinct location names derived from the enabled location sources
+  // (with conflict overrides applied). Falls back to the locationName
+  // template only when no sources are enabled.
   const distinctLocations = useMemo(() => {
     const counts = new Map<string, { totes: number; items: number }>();
     for (const tote of totes) {
-      const toteVars = {
-        toteId: tote.toteId, title: tote.title, location: tote.location,
-        profile: tote.profile, parentToteId: tote.parentToteId, dateUpdated: tote.dateUpdated,
-      };
-      const name = (renderTemplate(mapping.locationName, toteVars).trim() || tote.title || tote.toteId);
+      const name = pickLocationName(tote, locationSources, locationConflictRules, mapping);
       const prev = counts.get(name) ?? { totes: 0, items: 0 };
       counts.set(name, { totes: prev.totes + 1, items: prev.items + tote.items.length });
     }
     return Array.from(counts.entries())
       .map(([name, v]) => ({ name, totes: v.totes, items: v.items }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [totes, mapping.locationName]);
+  }, [totes, locationSources, locationConflictRules, mapping]);
+
+  // Totes with 2+ enabled sources that disagree, grouped by the unique
+  // combination of source values so users only resolve each combo once.
+  const locationConflicts = useMemo(() => {
+    const groups = new Map<string, {
+      key: string;
+      totes: number;
+      items: number;
+      values: Partial<Record<keyof LocationSources, string>>;
+    }>();
+    for (const tote of totes) {
+      const cands = locationCandidatesFor(tote, locationSources);
+      if (new Set(cands.map((c) => c.value)).size < 2) continue;
+      const key = locationConflictKey(tote, locationSources);
+      const prev = groups.get(key);
+      if (prev) { prev.totes += 1; prev.items += tote.items.length; }
+      else {
+        const values: Partial<Record<keyof LocationSources, string>> = {};
+        for (const c of cands) values[c.src] = c.value;
+        groups.set(key, { key, totes: 1, items: tote.items.length, values });
+      }
+    }
+    return Array.from(groups.values()).sort((a, b) => b.items - a.items);
+  }, [totes, locationSources]);
 
   async function handleFile(file: File) {
     try {
@@ -279,7 +382,7 @@ function App() {
         parentToteId: tote.parentToteId,
         dateUpdated: tote.dateUpdated,
       };
-      const rawLocName = renderTemplate(mapping.locationName, toteVars).trim() || tote.title || tote.toteId;
+      const rawLocName = pickLocationName(tote, locationSources, locationConflictRules, mapping);
       const locDesc = renderTemplate(mapping.locationDescription, toteVars);
 
       // Apply user-defined location rules (skip / remap).
@@ -497,6 +600,13 @@ function App() {
                     locationRules={locationRules}
                     setLocationRules={setLocationRules}
                     existingLocations={existingLocations}
+                    locationSourcesDraft={locationSourcesDraft}
+                    setLocationSourcesDraft={setLocationSourcesDraft}
+                    locationSources={locationSources}
+                    onRefresh={() => setLocationSources(locationSourcesDraft)}
+                    conflicts={locationConflicts}
+                    conflictRules={locationConflictRules}
+                    setConflictRules={setLocationConflictRules}
                   />
                 </DashboardSection>
               )}
@@ -1645,17 +1755,40 @@ function StepLocations({
   locationRules,
   setLocationRules,
   existingLocations,
+  locationSourcesDraft,
+  setLocationSourcesDraft,
+  locationSources,
+  onRefresh,
+  conflicts,
+  conflictRules,
+  setConflictRules,
 }: {
   distinctLocations: Array<{ name: string; totes: number; items: number }>;
   locationRules: Record<string, { import: boolean; remapTo: string }>;
   setLocationRules: (r: Record<string, { import: boolean; remapTo: string }>) => void;
   existingLocations: HomeboxLocation[];
+  locationSourcesDraft: LocationSources;
+  setLocationSourcesDraft: (s: LocationSources) => void;
+  locationSources: LocationSources;
+  onRefresh: () => void;
+  conflicts: Array<{ key: string; totes: number; items: number; values: Partial<Record<keyof LocationSources, string>> }>;
+  conflictRules: Record<string, keyof LocationSources>;
+  setConflictRules: (r: Record<string, keyof LocationSources>) => void;
 }) {
   const [filter, setFilter] = useState("");
+
+  const dirty = LOCATION_SOURCE_KEYS.some((k) => locationSourcesDraft[k] !== locationSources[k]);
 
   function setRule(name: string, patch: Partial<{ import: boolean; remapTo: string }>) {
     const prev = locationRules[name] ?? { import: true, remapTo: "" };
     setLocationRules({ ...locationRules, [name]: { ...prev, ...patch } });
+  }
+
+  function defaultConflictPick(values: Partial<Record<keyof LocationSources, string>>): keyof LocationSources {
+    for (const k of LOCATION_SOURCE_KEYS) {
+      if (values[k]) return k;
+    }
+    return LOCATION_SOURCE_KEYS[0];
   }
 
   const filtered = distinctLocations.filter((l) =>
@@ -1672,14 +1805,96 @@ function StepLocations({
     return r && !r.import && !r.remapTo.trim();
   }).length;
 
+  const sourcesBlock = (
+    <div className="mb-4 flex flex-wrap items-center gap-4 rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+      <div className="text-xs font-medium text-muted-foreground">Location sources:</div>
+      {LOCATION_SOURCE_KEYS.map((k) => (
+        <label key={k} className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-primary"
+            checked={locationSourcesDraft[k]}
+            onChange={(e) => setLocationSourcesDraft({ ...locationSourcesDraft, [k]: e.target.checked })}
+          />
+          {LOCATION_SOURCE_LABELS[k]}
+        </label>
+      ))}
+      <div className="ml-auto flex items-center gap-2">
+        {dirty && <span className="text-[11px] text-muted-foreground">unsaved changes</span>}
+        <Button size="sm" variant={dirty ? "default" : "outline"} onClick={onRefresh} disabled={!dirty}>
+          Refresh
+        </Button>
+      </div>
+    </div>
+  );
+
+  const conflictsBlock = conflicts.length > 0 && (
+    <div className="mb-6 overflow-hidden rounded-md border border-amber-500/40 bg-amber-500/5">
+      <div className="border-b border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs">
+        <span className="font-medium text-amber-200">{conflicts.length} conflict{conflicts.length === 1 ? "" : "s"}</span>{" "}
+        <span className="text-muted-foreground">
+          — these totes have values in 2+ enabled sources. Pick which source to use (default = priority: Location → Title → Profile).
+        </span>
+      </div>
+      <table className="w-full text-sm">
+        <thead className="bg-muted/40 text-[11px] uppercase tracking-wider text-muted-foreground">
+          <tr>
+            {LOCATION_SOURCE_KEYS.map((k) => (
+              <th key={k} className="px-3 py-2 text-left">{LOCATION_SOURCE_LABELS[k]}</th>
+            ))}
+            <th className="px-3 py-2 text-left">Totes</th>
+            <th className="px-3 py-2 text-left">Items</th>
+            <th className="px-3 py-2 text-left">Use source</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border/60">
+          {conflicts.map((c) => {
+            const pick = conflictRules[c.key] ?? defaultConflictPick(c.values);
+            return (
+              <tr key={c.key}>
+                {LOCATION_SOURCE_KEYS.map((k) => (
+                  <td key={k} className={`px-3 py-2 text-xs ${pick === k ? "font-medium text-foreground" : "text-muted-foreground"}`}>
+                    {c.values[k] ?? <span className="italic opacity-50">—</span>}
+                  </td>
+                ))}
+                <td className="px-3 py-2 text-xs text-muted-foreground">{c.totes}</td>
+                <td className="px-3 py-2 text-xs text-muted-foreground">{c.items}</td>
+                <td className="px-3 py-2">
+                  <div className="flex gap-1">
+                    {LOCATION_SOURCE_KEYS.filter((k) => c.values[k]).map((k) => (
+                      <Button
+                        key={k}
+                        size="sm"
+                        variant={pick === k ? "default" : "outline"}
+                        className="h-7 px-2 text-xs"
+                        onClick={() => setConflictRules({ ...conflictRules, [c.key]: k })}
+                      >
+                        {LOCATION_SOURCE_LABELS[k]}
+                      </Button>
+                    ))}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+
   if (distinctLocations.length === 0) {
     return (
-      <EmptyHint text="Upload an export (and set the Location name template in Mapping) to see distinct locations here." />
+      <div>
+        {sourcesBlock}
+        <EmptyHint text="Upload an export and enable at least one location source above to see distinct locations here." />
+      </div>
     );
   }
 
   return (
     <div>
+      {sourcesBlock}
+      {conflictsBlock}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="text-xs text-muted-foreground">
           <span className="font-medium text-foreground">{distinctLocations.length}</span> distinct ·{" "}
