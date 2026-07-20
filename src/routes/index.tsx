@@ -42,6 +42,14 @@ interface LogEntry {
   text: string;
 }
 
+type TagSources = { title: boolean; location: boolean; profile: boolean };
+const TAG_SOURCE_KEYS: Array<keyof TagSources> = ["title", "location", "profile"];
+const TAG_SOURCE_LABELS: Record<keyof TagSources, string> = {
+  title: "Title",
+  location: "Location",
+  profile: "Profile",
+};
+
 function App() {
   const [totes, setTotes] = useState<ParsedTote[]>([]);
   const [embedded, setEmbedded] = useState<EmbeddedPartsMap>(new Map());
