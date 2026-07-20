@@ -139,11 +139,6 @@ function App() {
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [totes, tagSources]);
-    }
-    return Array.from(counts.entries())
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [totes, mapping.itemTags]);
 
   // Distinct location names rendered from the current locationName template
   // across all parsed totes, with item counts for context.
