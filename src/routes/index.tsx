@@ -632,6 +632,7 @@ function DashboardSection({
   icon,
   badge,
   defaultOpen = true,
+  persistOpen = true,
   className,
   children,
 }: {
@@ -640,6 +641,7 @@ function DashboardSection({
   icon?: ReactNode;
   badge?: string;
   defaultOpen?: boolean;
+  persistOpen?: boolean;
   className?: string;
   children: ReactNode;
 }) {
@@ -648,6 +650,10 @@ function DashboardSection({
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
+    if (!persistOpen) {
+      setHydrated(true);
+      return;
+    }
     try {
       const raw = localStorage.getItem(storageKey);
       if (raw !== null) setOpen(raw === "1");
@@ -655,16 +661,16 @@ function DashboardSection({
       // ignore
     }
     setHydrated(true);
-  }, [storageKey]);
+  }, [storageKey, persistOpen]);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || !persistOpen) return;
     try {
       localStorage.setItem(storageKey, open ? "1" : "0");
     } catch {
       // ignore
     }
-  }, [open, hydrated, storageKey]);
+  }, [open, hydrated, storageKey, persistOpen]);
 
   return (
     <section className={`rounded-lg border border-border bg-card ${className ?? ""}`}>
