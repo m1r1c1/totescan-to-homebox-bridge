@@ -298,6 +298,8 @@ function App() {
             totalTotes={selectedTotes.length}
             totalItems={totalItems}
             logs={logs}
+            diagnostics={diagnostics}
+            onClearDiagnostics={() => setDiagnostics([])}
             progress={progress}
             running={running}
             done={done}
