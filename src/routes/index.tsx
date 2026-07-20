@@ -779,6 +779,7 @@ function StepImport({
   totalItems,
   logs,
   diagnostics,
+  homeboxClient,
   onClearDiagnostics,
   progress,
   running,
