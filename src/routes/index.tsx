@@ -885,7 +885,7 @@ function StepImport({
           </div>
         </div>
 
-        <DiagnosticsPanel entries={diagnostics} onClear={onClearDiagnostics} />
+        <DiagnosticsPanel entries={diagnostics} onClear={onClearDiagnostics} client={homeboxClient} />
       </section>
     </div>
   );
