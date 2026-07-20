@@ -515,7 +515,7 @@ function App() {
             },
             {
               value: "connection",
-              label: "5. Connection",
+              label: "6. Connection",
               icon: <Send className="h-4 w-4" />,
               badge: client ? "connected" : undefined,
               content: (
