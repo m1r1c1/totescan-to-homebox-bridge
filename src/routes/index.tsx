@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Upload, Package, CheckCircle2, XCircle, Loader2, Boxes, FileText, Settings2, Send, Image as ImageIcon, ChevronDown, Tag as TagIcon } from "lucide-react";
+import { Upload, Package, CheckCircle2, XCircle, Loader2, Boxes, FileText, Settings2, Send, Image as ImageIcon, ChevronDown, Tag as TagIcon, MapPin } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -71,6 +71,21 @@ function App() {
     try { localStorage.setItem("dash.tagRules", JSON.stringify(tagRules)); } catch { /* ignore */ }
   }, [tagRules]);
 
+  // Location rules: keyed by the rendered location name for each tote.
+  // `import` true = create/use as-is.
+  // `import` false + `remapTo` set = send items to the named location instead.
+  // `import` false + `remapTo` empty = skip the entire tote (items dropped).
+  const [locationRules, setLocationRules] = useState<Record<string, { import: boolean; remapTo: string }>>(() => {
+    try {
+      const raw = localStorage.getItem("dash.locationRules");
+      if (raw) return JSON.parse(raw);
+    } catch { /* ignore */ }
+    return {};
+  });
+  useEffect(() => {
+    try { localStorage.setItem("dash.locationRules", JSON.stringify(locationRules)); } catch { /* ignore */ }
+  }, [locationRules]);
+
   const selectedTotes = useMemo(
     () => totes.filter((t) => selectedIds.has(t.toteId)),
     [totes, selectedIds],
@@ -104,6 +119,24 @@ function App() {
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [totes, mapping.itemTags]);
+
+  // Distinct location names rendered from the current locationName template
+  // across all parsed totes, with item counts for context.
+  const distinctLocations = useMemo(() => {
+    const counts = new Map<string, { totes: number; items: number }>();
+    for (const tote of totes) {
+      const toteVars = {
+        toteId: tote.toteId, title: tote.title, location: tote.location,
+        profile: tote.profile, parentToteId: tote.parentToteId, dateUpdated: tote.dateUpdated,
+      };
+      const name = (renderTemplate(mapping.locationName, toteVars).trim() || tote.title || tote.toteId);
+      const prev = counts.get(name) ?? { totes: 0, items: 0 };
+      counts.set(name, { totes: prev.totes + 1, items: prev.items + tote.items.length });
+    }
+    return Array.from(counts.entries())
+      .map(([name, v]) => ({ name, totes: v.totes, items: v.items }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [totes, mapping.locationName]);
 
   async function handleFile(file: File) {
     try {
@@ -216,8 +249,23 @@ function App() {
         parentToteId: tote.parentToteId,
         dateUpdated: tote.dateUpdated,
       };
-      const locName = renderTemplate(mapping.locationName, toteVars).trim() || tote.title || tote.toteId;
+      const rawLocName = renderTemplate(mapping.locationName, toteVars).trim() || tote.title || tote.toteId;
       const locDesc = renderTemplate(mapping.locationDescription, toteVars);
+
+      // Apply user-defined location rules (skip / remap).
+      const locRule = locationRules[rawLocName];
+      let locName = rawLocName;
+      if (locRule && !locRule.import) {
+        const target = locRule.remapTo.trim();
+        if (!target) {
+          log({ level: "info", text: `= Skipped tote "${tote.title || tote.toteId}" (location "${rawLocName}" set to skip, ${tote.items.length} items dropped)` });
+          bumpProgress();
+          for (let i = 0; i < tote.items.length; i++) bumpProgress();
+          continue;
+        }
+        locName = target;
+        log({ level: "info", text: `~ Remapped location "${rawLocName}" → "${locName}"` });
+      }
 
       let locationId: string;
       try {
@@ -420,8 +468,31 @@ function App() {
               ),
             },
             {
+              value: "locations",
+              label: "4. Locations",
+              icon: <MapPin className="h-4 w-4" />,
+              badge: distinctLocations.length > 0 ? String(distinctLocations.length) : undefined,
+              content: (
+                <DashboardSection
+                  id="locations"
+                  title="Location import & remapping"
+                  icon={<MapPin className="h-4 w-4" />}
+                  badge={distinctLocations.length > 0 ? String(distinctLocations.length) : undefined}
+                  defaultOpen
+                  className="md:col-span-2"
+                >
+                  <StepLocations
+                    distinctLocations={distinctLocations}
+                    locationRules={locationRules}
+                    setLocationRules={setLocationRules}
+                    existingLocations={existingLocations}
+                  />
+                </DashboardSection>
+              ),
+            },
+            {
               value: "tags",
-              label: "4. Tags",
+              label: "5. Tags",
               icon: <TagIcon className="h-4 w-4" />,
               badge: distinctTags.length > 0 ? String(distinctTags.length) : undefined,
               content: (
@@ -444,7 +515,7 @@ function App() {
             },
             {
               value: "connection",
-              label: "5. Connection",
+              label: "6. Connection",
               icon: <Send className="h-4 w-4" />,
               badge: client ? "connected" : undefined,
               content: (
@@ -469,7 +540,7 @@ function App() {
             },
             {
               value: "import",
-              label: "6. Import",
+              label: "7. Import",
               icon: <Boxes className="h-4 w-4" />,
               badge: running ? `${progress}%` : done ? "done" : undefined,
               content: (
@@ -1448,4 +1519,131 @@ function StepTags({
     </div>
   );
 }
+
+function StepLocations({
+  distinctLocations,
+  locationRules,
+  setLocationRules,
+  existingLocations,
+}: {
+  distinctLocations: Array<{ name: string; totes: number; items: number }>;
+  locationRules: Record<string, { import: boolean; remapTo: string }>;
+  setLocationRules: (r: Record<string, { import: boolean; remapTo: string }>) => void;
+  existingLocations: HomeboxLocation[];
+}) {
+  const [filter, setFilter] = useState("");
+
+  function setRule(name: string, patch: Partial<{ import: boolean; remapTo: string }>) {
+    const prev = locationRules[name] ?? { import: true, remapTo: "" };
+    setLocationRules({ ...locationRules, [name]: { ...prev, ...patch } });
+  }
+
+  const filtered = distinctLocations.filter((l) =>
+    !filter.trim() ? true : l.name.toLowerCase().includes(filter.trim().toLowerCase()),
+  );
+
+  const importedCount = distinctLocations.filter((l) => (locationRules[l.name]?.import ?? true)).length;
+  const remappedCount = distinctLocations.filter((l) => {
+    const r = locationRules[l.name];
+    return r && !r.import && r.remapTo.trim();
+  }).length;
+  const skippedCount = distinctLocations.filter((l) => {
+    const r = locationRules[l.name];
+    return r && !r.import && !r.remapTo.trim();
+  }).length;
+
+  if (distinctLocations.length === 0) {
+    return (
+      <EmptyHint text="Upload an export (and set the Location name template in Mapping) to see distinct locations here." />
+    );
+  }
+
+  return (
+    <div>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">{distinctLocations.length}</span> distinct ·{" "}
+          <span className="text-primary">{importedCount} imported</span> ·{" "}
+          <span>{remappedCount} remapped</span> ·{" "}
+          <span className="text-destructive">{skippedCount} skipped</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter locations…"
+            className="h-8 w-52 text-sm"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setLocationRules({})}
+            disabled={Object.keys(locationRules).length === 0}
+          >
+            Reset all
+          </Button>
+        </div>
+      </div>
+
+      <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+        Turn a location <span className="font-medium">off</span> to skip it during import. When off, type
+        or pick another location name to <span className="font-medium">remap</span> every tote using that
+        location onto the replacement (existing Homebox locations autocomplete). Leave the remap blank to
+        skip the tote and its items entirely.
+      </p>
+
+      <div className="overflow-hidden rounded-md border border-border/60">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/40 text-[11px] uppercase tracking-wider text-muted-foreground">
+            <tr>
+              <th className="px-3 py-2 text-left">Totescan location</th>
+              <th className="px-3 py-2 text-left">Totes</th>
+              <th className="px-3 py-2 text-left">Items</th>
+              <th className="px-3 py-2 text-left">Import</th>
+              <th className="px-3 py-2 text-left">Remap to (when not imported)</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/60">
+            {filtered.map((l) => {
+              const rule = locationRules[l.name] ?? { import: true, remapTo: "" };
+              const willImport = rule.import;
+              return (
+                <tr key={l.name} className={willImport ? "" : "bg-background/60"}>
+                  <td className="px-3 py-2 font-medium">{l.name}</td>
+                  <td className="px-3 py-2 text-xs text-muted-foreground">{l.totes}</td>
+                  <td className="px-3 py-2 text-xs text-muted-foreground">{l.items}</td>
+                  <td className="px-3 py-2">
+                    <Switch
+                      checked={willImport}
+                      onCheckedChange={(v) => setRule(l.name, { import: v })}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <Input
+                      list="location-remap-options"
+                      value={rule.remapTo}
+                      onChange={(e) => setRule(l.name, { remapTo: e.target.value })}
+                      disabled={willImport}
+                      placeholder={willImport ? "—" : "leave blank to skip tote"}
+                      className="h-8 text-sm"
+                    />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <datalist id="location-remap-options">
+        {distinctLocations.map((l) => (
+          <option key={`d-${l.name}`} value={l.name} />
+        ))}
+        {existingLocations.map((l) => (
+          <option key={`h-${l.id}`} value={l.name} />
+        ))}
+      </datalist>
+    </div>
+  );
+}
+
 
