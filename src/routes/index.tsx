@@ -71,6 +71,21 @@ function App() {
     try { localStorage.setItem("dash.tagRules", JSON.stringify(tagRules)); } catch { /* ignore */ }
   }, [tagRules]);
 
+  // Location rules: keyed by the rendered location name for each tote.
+  // `import` true = create/use as-is.
+  // `import` false + `remapTo` set = send items to the named location instead.
+  // `import` false + `remapTo` empty = skip the entire tote (items dropped).
+  const [locationRules, setLocationRules] = useState<Record<string, { import: boolean; remapTo: string }>>(() => {
+    try {
+      const raw = localStorage.getItem("dash.locationRules");
+      if (raw) return JSON.parse(raw);
+    } catch { /* ignore */ }
+    return {};
+  });
+  useEffect(() => {
+    try { localStorage.setItem("dash.locationRules", JSON.stringify(locationRules)); } catch { /* ignore */ }
+  }, [locationRules]);
+
   const selectedTotes = useMemo(
     () => totes.filter((t) => selectedIds.has(t.toteId)),
     [totes, selectedIds],
