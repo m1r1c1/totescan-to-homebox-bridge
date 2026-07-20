@@ -65,13 +65,23 @@ function App() {
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
   // Tag rules: keyed by the raw tag value produced by the itemTags template.
-  // `import` false + `remapTo` empty = drop the tag entirely.
-  // `import` false + `remapTo` set = replace with that tag name.
-  // `import` true = pass through unchanged.
-  const [tagRules, setTagRules] = useState<Record<string, { import: boolean; remapTo: string }>>(() => {
+  // `import` false + `remapTo` empty  = drop the tag entirely.
+  // `import` false + `remapTo` set    = replace with those 1+ tag names (fan-out).
+  // `import` true                     = pass through unchanged.
+  const [tagRules, setTagRules] = useState<Record<string, { import: boolean; remapTo: string[] }>>(() => {
     try {
       const raw = localStorage.getItem("dash.tagRules");
-      if (raw) return JSON.parse(raw);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Record<string, { import: boolean; remapTo: string | string[] }>;
+        const migrated: Record<string, { import: boolean; remapTo: string[] }> = {};
+        for (const [k, v] of Object.entries(parsed)) {
+          const arr = Array.isArray(v.remapTo)
+            ? v.remapTo.filter((s) => s && s.trim())
+            : (v.remapTo && v.remapTo.trim() ? [v.remapTo.trim()] : []);
+          migrated[k] = { import: !!v.import, remapTo: arr };
+        }
+        return migrated;
+      }
     } catch { /* ignore */ }
     return {};
   });
@@ -342,9 +352,9 @@ function App() {
         for (const raw of rawTagNames) {
           const rule = tagRules[raw];
           if (!rule || rule.import) { resolvedTagNames.push(raw); continue; }
-          const target = rule.remapTo.trim();
-          if (target) resolvedTagNames.push(target);
-          // else: dropped entirely
+          const targets = (rule.remapTo ?? []).map((s) => s.trim()).filter(Boolean);
+          for (const t of targets) resolvedTagNames.push(t);
+          // if targets empty: dropped entirely
         }
         const tagNames = Array.from(new Set(resolvedTagNames));
 
@@ -1392,6 +1402,84 @@ function DiagBlock({ label, body, tone }: { label: string; body: string; tone?: 
   );
 }
 
+function TagChipInput({
+  value,
+  onChange,
+  disabled,
+  placeholder,
+  datalistId,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  datalistId?: string;
+}) {
+  const [draft, setDraft] = useState("");
+
+  function commit(raw: string) {
+    const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parts.length === 0) return;
+    const merged = [...value];
+    for (const p of parts) {
+      if (!merged.some((x) => x.toLowerCase() === p.toLowerCase())) merged.push(p);
+    }
+    onChange(merged);
+    setDraft("");
+  }
+
+  function removeAt(i: number) {
+    const next = value.slice();
+    next.splice(i, 1);
+    onChange(next);
+  }
+
+  return (
+    <div
+      className={`flex min-h-8 flex-wrap items-center gap-1 rounded-md border border-input bg-background px-2 py-1 text-sm ${
+        disabled ? "opacity-50" : ""
+      }`}
+    >
+      {value.map((chip, i) => (
+        <span
+          key={`${chip}-${i}`}
+          className="inline-flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary"
+        >
+          {chip}
+          {!disabled && (
+            <button
+              type="button"
+              className="text-primary/70 hover:text-primary"
+              onClick={() => removeAt(i)}
+              aria-label={`Remove ${chip}`}
+            >
+              ×
+            </button>
+          )}
+        </span>
+      ))}
+      <input
+        list={datalistId}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === ",") {
+            e.preventDefault();
+            commit(draft);
+          } else if (e.key === "Backspace" && draft === "" && value.length > 0) {
+            e.preventDefault();
+            removeAt(value.length - 1);
+          }
+        }}
+        onBlur={() => { if (draft.trim()) commit(draft); }}
+        disabled={disabled}
+        placeholder={value.length === 0 ? placeholder : ""}
+        className="flex-1 min-w-[8ch] bg-transparent outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
+      />
+    </div>
+  );
+}
+
 function StepTags({
   distinctTags,
   tagRules,
@@ -1403,8 +1491,8 @@ function StepTags({
   onRefresh,
 }: {
   distinctTags: Array<{ name: string; count: number }>;
-  tagRules: Record<string, { import: boolean; remapTo: string }>;
-  setTagRules: (r: Record<string, { import: boolean; remapTo: string }>) => void;
+  tagRules: Record<string, { import: boolean; remapTo: string[] }>;
+  setTagRules: (r: Record<string, { import: boolean; remapTo: string[] }>) => void;
   existingLabels: HomeboxLabel[];
   tagSourcesDraft: TagSources;
   setTagSourcesDraft: (s: TagSources) => void;
@@ -1415,8 +1503,8 @@ function StepTags({
 
   const dirty = TAG_SOURCE_KEYS.some((k) => tagSourcesDraft[k] !== tagSources[k]);
 
-  function setRule(name: string, patch: Partial<{ import: boolean; remapTo: string }>) {
-    const prev = tagRules[name] ?? { import: true, remapTo: "" };
+  function setRule(name: string, patch: Partial<{ import: boolean; remapTo: string[] }>) {
+    const prev = tagRules[name] ?? { import: true, remapTo: [] as string[] };
     setTagRules({ ...tagRules, [name]: { ...prev, ...patch } });
   }
 
@@ -1427,11 +1515,11 @@ function StepTags({
   const importedCount = distinctTags.filter((t) => (tagRules[t.name]?.import ?? true)).length;
   const remappedCount = distinctTags.filter((t) => {
     const r = tagRules[t.name];
-    return r && !r.import && r.remapTo.trim();
+    return !!(r && !r.import && r.remapTo.length > 0);
   }).length;
   const skippedCount = distinctTags.filter((t) => {
     const r = tagRules[t.name];
-    return r && !r.import && !r.remapTo.trim();
+    return !!(r && !r.import && r.remapTo.length === 0);
   }).length;
 
   const sourcesBlock = (
@@ -1513,7 +1601,7 @@ function StepTags({
           </thead>
           <tbody className="divide-y divide-border/60">
             {filtered.map((t) => {
-              const rule = tagRules[t.name] ?? { import: true, remapTo: "" };
+              const rule = tagRules[t.name] ?? { import: true, remapTo: [] as string[] };
               const willImport = rule.import;
               return (
                 <tr key={t.name} className={willImport ? "" : "bg-background/60"}>
@@ -1526,13 +1614,12 @@ function StepTags({
                     />
                   </td>
                   <td className="px-3 py-2">
-                    <Input
-                      list="tag-remap-options"
+                    <TagChipInput
                       value={rule.remapTo}
-                      onChange={(e) => setRule(t.name, { remapTo: e.target.value })}
+                      onChange={(next) => setRule(t.name, { remapTo: next })}
                       disabled={willImport}
-                      placeholder={willImport ? "—" : "leave blank to drop"}
-                      className="h-8 text-sm"
+                      placeholder={willImport ? "—" : "type tag + Enter (leave empty to drop)"}
+                      datalistId="tag-remap-options"
                     />
                   </td>
                 </tr>
