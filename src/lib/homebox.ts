@@ -390,10 +390,11 @@ export class HomeboxClient {
       const r = await this.request("GET", `/api/v1/entities?page=${page}&pageSize=500`);
       if (!r.ok) throw new Error(`List entities failed: ${r.status}`);
       const body = await r.json();
-      const items: Array<{ id: string; name: string; entityType?: { id?: string } }> =
+      const items: Array<{ id: string; name: string; entityType?: { id?: string; isLocation?: boolean } }> =
         Array.isArray(body) ? body : (body.items ?? []);
       for (const it of items) {
-        if (it.entityType?.id === this.itemTypeId) summaries.push({ id: it.id, name: it.name });
+        // Any non-location entity type counts as an "item" for import purposes.
+        if (it.entityType && !it.entityType.isLocation) summaries.push({ id: it.id, name: it.name });
       }
       const total = body?.total ?? items.length;
       if (page * 500 >= total || items.length === 0) break;
