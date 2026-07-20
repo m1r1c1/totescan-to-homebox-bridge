@@ -119,25 +119,26 @@ function App() {
     [selectedTotes],
   );
 
-  // Distinct tag values (with usage counts) rendered from the current
-  // itemTags template across ALL parsed totes' items — so users see every
-  // tag their export would produce, not just what's currently selected.
+  // Distinct tag values (with usage counts) derived from the ACTIVE tag
+  // sources (Title / Location / Profile). Users toggle draft checkboxes and
+  // click Refresh to promote to active, so mid-edit rows aren't disrupted.
   const distinctTags = useMemo(() => {
     const counts = new Map<string, number>();
     for (const tote of totes) {
-      const toteVars = {
-        toteId: tote.toteId, title: tote.title, location: tote.location,
-        profile: tote.profile, parentToteId: tote.parentToteId, dateUpdated: tote.dateUpdated,
-      };
+      const sourceValues: string[] = [];
+      if (tagSources.title && tote.title.trim()) sourceValues.push(tote.title.trim());
+      if (tagSources.location && tote.location.trim()) sourceValues.push(tote.location.trim());
+      if (tagSources.profile && tote.profile.trim()) sourceValues.push(tote.profile.trim());
+      const perTote = Array.from(new Set(sourceValues));
       for (const item of tote.items) {
-        const vars = { ...toteVars, name: item.name, itemNumber: item.itemNumber, quantity: item.quantity, description: item.description, upc: item.upc, created: item.created, updated: item.updated };
-        const rendered = mapping.itemTags ? renderTemplate(mapping.itemTags, vars) : "";
-        for (const raw of rendered.split(",")) {
-          const t = raw.trim();
-          if (!t) continue;
-          counts.set(t, (counts.get(t) ?? 0) + 1);
-        }
+        void item;
+        for (const t of perTote) counts.set(t, (counts.get(t) ?? 0) + 1);
       }
+    }
+    return Array.from(counts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [totes, tagSources]);
     }
     return Array.from(counts.entries())
       .map(([name, count]) => ({ name, count }))
