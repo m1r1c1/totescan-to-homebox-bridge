@@ -34,6 +34,20 @@ export interface HomeboxItem {
   name: string;
 }
 
+export interface HomeboxCustomField {
+  name: string;
+  type?: string;
+  textValue?: string;
+  numberValue?: number;
+  booleanValue?: boolean;
+}
+
+export interface ExistingItemIndex {
+  id: string;
+  name: string;
+  importRef?: string;
+}
+
 export interface DiagnosticEntry {
   id: number;
   timestamp: string;
