@@ -42,6 +42,14 @@ interface LogEntry {
   text: string;
 }
 
+type TagSources = { title: boolean; location: boolean; profile: boolean };
+const TAG_SOURCE_KEYS: Array<keyof TagSources> = ["title", "location", "profile"];
+const TAG_SOURCE_LABELS: Record<keyof TagSources, string> = {
+  title: "Title",
+  location: "Location",
+  profile: "Profile",
+};
+
 function App() {
   const [totes, setTotes] = useState<ParsedTote[]>([]);
   const [embedded, setEmbedded] = useState<EmbeddedPartsMap>(new Map());
@@ -71,6 +79,22 @@ function App() {
     try { localStorage.setItem("dash.tagRules", JSON.stringify(tagRules)); } catch { /* ignore */ }
   }, [tagRules]);
 
+  // Which Totescan fields feed the Tags tab. Applied (active) vs. draft
+  // controlled by checkboxes; user clicks Refresh to promote draft → active
+  // so partially-configured rows aren't disrupted mid-edit.
+  const DEFAULT_TAG_SOURCES: TagSources = { title: true, location: true, profile: true };
+  const [tagSources, setTagSources] = useState<TagSources>(() => {
+    try {
+      const raw = localStorage.getItem("dash.tagSources");
+      if (raw) return { ...DEFAULT_TAG_SOURCES, ...JSON.parse(raw) };
+    } catch { /* ignore */ }
+    return DEFAULT_TAG_SOURCES;
+  });
+  const [tagSourcesDraft, setTagSourcesDraft] = useState<TagSources>(tagSources);
+  useEffect(() => {
+    try { localStorage.setItem("dash.tagSources", JSON.stringify(tagSources)); } catch { /* ignore */ }
+  }, [tagSources]);
+
   // Location rules: keyed by the rendered location name for each tote.
   // `import` true = create/use as-is.
   // `import` false + `remapTo` set = send items to the named location instead.
@@ -95,30 +119,26 @@ function App() {
     [selectedTotes],
   );
 
-  // Distinct tag values (with usage counts) rendered from the current
-  // itemTags template across ALL parsed totes' items — so users see every
-  // tag their export would produce, not just what's currently selected.
+  // Distinct tag values (with usage counts) derived from the ACTIVE tag
+  // sources (Title / Location / Profile). Users toggle draft checkboxes and
+  // click Refresh to promote to active, so mid-edit rows aren't disrupted.
   const distinctTags = useMemo(() => {
     const counts = new Map<string, number>();
     for (const tote of totes) {
-      const toteVars = {
-        toteId: tote.toteId, title: tote.title, location: tote.location,
-        profile: tote.profile, parentToteId: tote.parentToteId, dateUpdated: tote.dateUpdated,
-      };
+      const sourceValues: string[] = [];
+      if (tagSources.title && tote.title.trim()) sourceValues.push(tote.title.trim());
+      if (tagSources.location && tote.location.trim()) sourceValues.push(tote.location.trim());
+      if (tagSources.profile && tote.profile.trim()) sourceValues.push(tote.profile.trim());
+      const perTote = Array.from(new Set(sourceValues));
       for (const item of tote.items) {
-        const vars = { ...toteVars, name: item.name, itemNumber: item.itemNumber, quantity: item.quantity, description: item.description, upc: item.upc, created: item.created, updated: item.updated };
-        const rendered = mapping.itemTags ? renderTemplate(mapping.itemTags, vars) : "";
-        for (const raw of rendered.split(",")) {
-          const t = raw.trim();
-          if (!t) continue;
-          counts.set(t, (counts.get(t) ?? 0) + 1);
-        }
+        void item;
+        for (const t of perTote) counts.set(t, (counts.get(t) ?? 0) + 1);
       }
     }
     return Array.from(counts.entries())
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [totes, mapping.itemTags]);
+  }, [totes, tagSources]);
 
   // Distinct location names rendered from the current locationName template
   // across all parsed totes, with item counts for context.
@@ -313,9 +333,10 @@ function App() {
         const qtyNum = qtyStr ? parseInt(qtyStr, 10) : item.quantity;
         const quantity = Number.isFinite(qtyNum) && qtyNum > 0 ? qtyNum : item.quantity;
         const assetId = mapping.itemAssetId ? renderTemplate(mapping.itemAssetId, itemVars).trim() : undefined;
-        const rawTagNames = mapping.itemTags
-          ? renderTemplate(mapping.itemTags, itemVars).split(",").map((s) => s.trim()).filter(Boolean)
-          : [];
+        const rawTagNames: string[] = [];
+        if (tagSources.title && tote.title.trim()) rawTagNames.push(tote.title.trim());
+        if (tagSources.location && tote.location.trim()) rawTagNames.push(tote.location.trim());
+        if (tagSources.profile && tote.profile.trim()) rawTagNames.push(tote.profile.trim());
         // Apply user-defined tag rules (skip / remap).
         const resolvedTagNames: string[] = [];
         for (const raw of rawTagNames) {
@@ -483,6 +504,10 @@ function App() {
                     tagRules={tagRules}
                     setTagRules={setTagRules}
                     existingLabels={existingLabels}
+                    tagSourcesDraft={tagSourcesDraft}
+                    setTagSourcesDraft={setTagSourcesDraft}
+                    tagSources={tagSources}
+                    onRefresh={() => setTagSources(tagSourcesDraft)}
                   />
                 </DashboardSection>
               )}
@@ -1372,13 +1397,23 @@ function StepTags({
   tagRules,
   setTagRules,
   existingLabels,
+  tagSourcesDraft,
+  setTagSourcesDraft,
+  tagSources,
+  onRefresh,
 }: {
   distinctTags: Array<{ name: string; count: number }>;
   tagRules: Record<string, { import: boolean; remapTo: string }>;
   setTagRules: (r: Record<string, { import: boolean; remapTo: string }>) => void;
   existingLabels: HomeboxLabel[];
+  tagSourcesDraft: TagSources;
+  setTagSourcesDraft: (s: TagSources) => void;
+  tagSources: TagSources;
+  onRefresh: () => void;
 }) {
   const [filter, setFilter] = useState("");
+
+  const dirty = TAG_SOURCE_KEYS.some((k) => tagSourcesDraft[k] !== tagSources[k]);
 
   function setRule(name: string, patch: Partial<{ import: boolean; remapTo: string }>) {
     const prev = tagRules[name] ?? { import: true, remapTo: "" };
@@ -1399,14 +1434,41 @@ function StepTags({
     return r && !r.import && !r.remapTo.trim();
   }).length;
 
+  const sourcesBlock = (
+    <div className="mb-4 flex flex-wrap items-center gap-4 rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+      <div className="text-xs font-medium text-muted-foreground">Tag sources:</div>
+      {TAG_SOURCE_KEYS.map((k) => (
+        <label key={k} className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-primary"
+            checked={tagSourcesDraft[k]}
+            onChange={(e) => setTagSourcesDraft({ ...tagSourcesDraft, [k]: e.target.checked })}
+          />
+          {TAG_SOURCE_LABELS[k]}
+        </label>
+      ))}
+      <div className="ml-auto flex items-center gap-2">
+        {dirty && <span className="text-[11px] text-muted-foreground">unsaved changes</span>}
+        <Button size="sm" variant={dirty ? "default" : "outline"} onClick={onRefresh} disabled={!dirty}>
+          Refresh
+        </Button>
+      </div>
+    </div>
+  );
+
   if (distinctTags.length === 0) {
     return (
-      <EmptyHint text="Upload an export and configure the itemTags template in the Mapping tab to see distinct tags here." />
+      <div>
+        {sourcesBlock}
+        <EmptyHint text="Upload an export and enable at least one tag source above to see distinct tags here." />
+      </div>
     );
   }
 
   return (
     <div>
+      {sourcesBlock}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="text-xs text-muted-foreground">
           <span className="font-medium text-foreground">{distinctTags.length}</span> distinct ·{" "}
