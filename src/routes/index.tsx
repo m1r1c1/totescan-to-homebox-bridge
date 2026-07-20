@@ -972,6 +972,50 @@ function DiagnosticsPanel({ entries, onClear, client }: { entries: DiagnosticEnt
           </Button>
         </div>
       </div>
+
+      <div className="mb-3 rounded-md border border-border/60 bg-background/60 p-3 text-xs">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <p className="font-semibold uppercase tracking-wider text-muted-foreground">Cookie auth</p>
+          <Button size="sm" variant="outline" onClick={runCookieTest} disabled={!client || testing}>
+            {testing ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : null}
+            Test cookie-only auth
+          </Button>
+        </div>
+        <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 font-mono text-[11px]">
+          <dt className="text-muted-foreground">login Set-Cookie</dt>
+          <dd className="break-all">
+            {loginEntry
+              ? setCookieVisible
+                ? setCookieVisible
+                : <span className="text-muted-foreground">not visible to JS (normal for cross-origin / HttpOnly)</span>
+              : <span className="text-muted-foreground">no login recorded yet</span>}
+          </dd>
+          <dt className="text-muted-foreground">ACA-Credentials</dt>
+          <dd className={acaCredentials === "true" ? "text-primary" : "text-destructive"}>
+            {acaCredentials ?? "missing — Homebox must send Access-Control-Allow-Credentials: true"}
+          </dd>
+          <dt className="text-muted-foreground">ACA-Origin</dt>
+          <dd className={acaOrigin && acaOrigin !== "*" ? "text-primary" : "text-destructive"}>
+            {acaOrigin ?? "missing"} {acaOrigin === "*" && "(must echo specific origin, not *, for cookies)"}
+          </dd>
+          <dt className="text-muted-foreground">document.cookie</dt>
+          <dd className="break-all">
+            {visibleHbCookies.length > 0
+              ? visibleHbCookies.join("; ")
+              : <span className="text-muted-foreground">no hb.auth.* cookies visible (HttpOnly cookies are hidden from JS — this is expected)</span>}
+          </dd>
+          <dt className="text-muted-foreground">cookie-only probe</dt>
+          <dd className={cookieTest ? (cookieTest.ok ? "text-primary" : "text-destructive") : "text-muted-foreground"}>
+            {cookieTest
+              ? `${cookieTest.ok ? "SUCCESS" : "FAILED"} — GET /api/v1/users/self without Bearer → ${cookieTest.status}`
+              : "not run yet — click the button to verify cookies alone authenticate"}
+          </dd>
+        </dl>
+        <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
+          Browsers do not expose Set-Cookie response headers or the outgoing Cookie header to JavaScript for cross-origin requests, so the only reliable check is the cookie-only probe above.
+        </p>
+      </div>
+
       <ScrollArea className="h-[360px] rounded border border-border/60 bg-background/60">
         {filtered.length === 0 ? (
           <p className="p-3 text-xs text-muted-foreground">
