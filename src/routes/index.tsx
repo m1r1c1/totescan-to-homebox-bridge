@@ -50,6 +50,59 @@ const TAG_SOURCE_LABELS: Record<keyof TagSources, string> = {
   profile: "Profile",
 };
 
+type LocationSources = TagSources;
+// Priority order used to pick a default when multiple sources have values.
+const LOCATION_SOURCE_KEYS: Array<keyof LocationSources> = ["location", "title", "profile"];
+const LOCATION_SOURCE_LABELS: Record<keyof LocationSources, string> = TAG_SOURCE_LABELS;
+const DEFAULT_LOCATION_SOURCES: LocationSources = { title: true, location: true, profile: true };
+
+interface LocationCandidate { src: keyof LocationSources; value: string }
+function locationCandidatesFor(
+  tote: { title: string; location: string; profile: string },
+  sources: LocationSources,
+): LocationCandidate[] {
+  const out: LocationCandidate[] = [];
+  for (const k of LOCATION_SOURCE_KEYS) {
+    if (!sources[k]) continue;
+    const v = (tote[k] ?? "").trim();
+    if (v) out.push({ src: k, value: v });
+  }
+  return out;
+}
+function locationConflictKey(
+  tote: { title: string; location: string; profile: string },
+  sources: LocationSources,
+): string {
+  return LOCATION_SOURCE_KEYS
+    .filter((k) => sources[k])
+    .map((k) => `${k}:${(tote[k] ?? "").trim()}`)
+    .join("|");
+}
+function pickLocationName(
+  tote: { toteId: string; title: string; location: string; profile: string; parentToteId: string; dateUpdated: string },
+  sources: LocationSources,
+  conflictRules: Record<string, keyof LocationSources>,
+  mapping: MappingConfig,
+): string {
+  const cands = locationCandidatesFor(tote, sources);
+  if (cands.length === 0) {
+    const toteVars = {
+      toteId: tote.toteId, title: tote.title, location: tote.location,
+      profile: tote.profile, parentToteId: tote.parentToteId, dateUpdated: tote.dateUpdated,
+    };
+    return renderTemplate(mapping.locationName, toteVars).trim() || tote.title || tote.toteId;
+  }
+  const distinct = Array.from(new Set(cands.map((c) => c.value)));
+  if (distinct.length === 1) return cands[0].value;
+  const key = locationConflictKey(tote, sources);
+  const chosen = conflictRules[key];
+  if (chosen) {
+    const found = cands.find((c) => c.src === chosen);
+    if (found) return found.value;
+  }
+  return cands[0].value;
+}
+
 function App() {
   const [totes, setTotes] = useState<ParsedTote[]>([]);
   const [embedded, setEmbedded] = useState<EmbeddedPartsMap>(new Map());
