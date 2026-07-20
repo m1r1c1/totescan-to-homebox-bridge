@@ -1143,16 +1143,3 @@ function DiagBlock({ label, body, tone }: { label: string; body: string; tone?: 
     </div>
   );
 }
-
-function NavButtons({ onBack, onNext, nextLabel, nextDisabled }: { onBack: () => void; onNext: () => void; nextLabel: string; nextDisabled?: boolean }) {
-  return (
-    <div className="mt-8 flex items-center justify-between">
-      <Button variant="outline" onClick={onBack}>
-        <ArrowLeft className="mr-2 h-4 w-4" /> Back
-      </Button>
-      <Button onClick={onNext} disabled={nextDisabled}>
-        {nextLabel} <ArrowRight className="ml-2 h-4 w-4" />
-      </Button>
-    </div>
-  );
-}
