@@ -65,13 +65,23 @@ function App() {
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
   // Tag rules: keyed by the raw tag value produced by the itemTags template.
-  // `import` false + `remapTo` empty = drop the tag entirely.
-  // `import` false + `remapTo` set = replace with that tag name.
-  // `import` true = pass through unchanged.
-  const [tagRules, setTagRules] = useState<Record<string, { import: boolean; remapTo: string }>>(() => {
+  // `import` false + `remapTo` empty  = drop the tag entirely.
+  // `import` false + `remapTo` set    = replace with those 1+ tag names (fan-out).
+  // `import` true                     = pass through unchanged.
+  const [tagRules, setTagRules] = useState<Record<string, { import: boolean; remapTo: string[] }>>(() => {
     try {
       const raw = localStorage.getItem("dash.tagRules");
-      if (raw) return JSON.parse(raw);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Record<string, { import: boolean; remapTo: string | string[] }>;
+        const migrated: Record<string, { import: boolean; remapTo: string[] }> = {};
+        for (const [k, v] of Object.entries(parsed)) {
+          const arr = Array.isArray(v.remapTo)
+            ? v.remapTo.filter((s) => s && s.trim())
+            : (v.remapTo && v.remapTo.trim() ? [v.remapTo.trim()] : []);
+          migrated[k] = { import: !!v.import, remapTo: arr };
+        }
+        return migrated;
+      }
     } catch { /* ignore */ }
     return {};
   });
