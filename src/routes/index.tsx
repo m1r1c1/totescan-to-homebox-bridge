@@ -173,6 +173,35 @@ function App() {
     try { localStorage.setItem("dash.locationRules", JSON.stringify(locationRules)); } catch { /* ignore */ }
   }, [locationRules]);
 
+  // Location sources (which Totescan fields feed location names). Same
+  // draft-then-Refresh pattern as tag sources so partially-configured rows
+  // aren't disrupted mid-edit.
+  const [locationSources, setLocationSources] = useState<LocationSources>(() => {
+    try {
+      const raw = localStorage.getItem("dash.locationSources");
+      if (raw) return { ...DEFAULT_LOCATION_SOURCES, ...JSON.parse(raw) };
+    } catch { /* ignore */ }
+    return DEFAULT_LOCATION_SOURCES;
+  });
+  const [locationSourcesDraft, setLocationSourcesDraft] = useState<LocationSources>(locationSources);
+  useEffect(() => {
+    try { localStorage.setItem("dash.locationSources", JSON.stringify(locationSources)); } catch { /* ignore */ }
+  }, [locationSources]);
+
+  // Per-conflict override: when a tote has 2+ enabled sources with different
+  // values, this maps the conflict key → chosen source key. Default pick is
+  // priority-order (Location → Title → Profile).
+  const [locationConflictRules, setLocationConflictRules] = useState<Record<string, keyof LocationSources>>(() => {
+    try {
+      const raw = localStorage.getItem("dash.locationConflictRules");
+      if (raw) return JSON.parse(raw);
+    } catch { /* ignore */ }
+    return {};
+  });
+  useEffect(() => {
+    try { localStorage.setItem("dash.locationConflictRules", JSON.stringify(locationConflictRules)); } catch { /* ignore */ }
+  }, [locationConflictRules]);
+
   const selectedTotes = useMemo(
     () => totes.filter((t) => selectedIds.has(t.toteId)),
     [totes, selectedIds],
