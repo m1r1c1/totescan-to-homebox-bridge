@@ -1518,6 +1518,7 @@ function StepTags({
       </datalist>
     </div>
   );
+}
 
 function StepLocations({
   distinctLocations,
