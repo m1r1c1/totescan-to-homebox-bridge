@@ -103,7 +103,12 @@ export class HomeboxClient {
 
   private authHeaders(extra: Record<string, string> = {}): Record<string, string> {
     const h: Record<string, string> = { ...extra };
-    if (this.token) h["Authorization"] = `Bearer ${this.token}`;
+    if (this.token) {
+      // Homebox may return the token already prefixed with "Bearer " — don't double it.
+      const raw = this.token.trim();
+      const value = /^bearer\s+/i.test(raw) ? raw : `Bearer ${raw}`;
+      h["Authorization"] = value;
+    }
     return h;
   }
 
