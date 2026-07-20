@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Upload, Package, CheckCircle2, XCircle, Loader2, Boxes, FileText, Settings2, Send, Image as ImageIcon, ChevronDown } from "lucide-react";
+import { Upload, Package, CheckCircle2, XCircle, Loader2, Boxes, FileText, Settings2, Send, Image as ImageIcon, ChevronDown, Tag as TagIcon, MapPin } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,6 +42,67 @@ interface LogEntry {
   text: string;
 }
 
+type TagSources = { title: boolean; location: boolean; profile: boolean };
+const TAG_SOURCE_KEYS: Array<keyof TagSources> = ["title", "location", "profile"];
+const TAG_SOURCE_LABELS: Record<keyof TagSources, string> = {
+  title: "Title",
+  location: "Location",
+  profile: "Profile",
+};
+
+type LocationSources = TagSources;
+// Priority order used to pick a default when multiple sources have values.
+const LOCATION_SOURCE_KEYS: Array<keyof LocationSources> = ["location", "title", "profile"];
+const LOCATION_SOURCE_LABELS: Record<keyof LocationSources, string> = TAG_SOURCE_LABELS;
+const DEFAULT_LOCATION_SOURCES: LocationSources = { title: true, location: true, profile: true };
+
+interface LocationCandidate { src: keyof LocationSources; value: string }
+function locationCandidatesFor(
+  tote: { title: string; location: string; profile: string },
+  sources: LocationSources,
+): LocationCandidate[] {
+  const out: LocationCandidate[] = [];
+  for (const k of LOCATION_SOURCE_KEYS) {
+    if (!sources[k]) continue;
+    const v = (tote[k] ?? "").trim();
+    if (v) out.push({ src: k, value: v });
+  }
+  return out;
+}
+function locationConflictKey(
+  tote: { title: string; location: string; profile: string },
+  sources: LocationSources,
+): string {
+  return LOCATION_SOURCE_KEYS
+    .filter((k) => sources[k])
+    .map((k) => `${k}:${(tote[k] ?? "").trim()}`)
+    .join("|");
+}
+function pickLocationName(
+  tote: { toteId: string; title: string; location: string; profile: string; parentToteId: string; dateUpdated: string },
+  sources: LocationSources,
+  conflictRules: Record<string, keyof LocationSources>,
+  mapping: MappingConfig,
+): string {
+  const cands = locationCandidatesFor(tote, sources);
+  if (cands.length === 0) {
+    const toteVars = {
+      toteId: tote.toteId, title: tote.title, location: tote.location,
+      profile: tote.profile, parentToteId: tote.parentToteId, dateUpdated: tote.dateUpdated,
+    };
+    return renderTemplate(mapping.locationName, toteVars).trim() || tote.title || tote.toteId;
+  }
+  const distinct = Array.from(new Set(cands.map((c) => c.value)));
+  if (distinct.length === 1) return cands[0].value;
+  const key = locationConflictKey(tote, sources);
+  const chosen = conflictRules[key];
+  if (chosen) {
+    const found = cands.find((c) => c.src === chosen);
+    if (found) return found.value;
+  }
+  return cands[0].value;
+}
+
 function App() {
   const [totes, setTotes] = useState<ParsedTote[]>([]);
   const [embedded, setEmbedded] = useState<EmbeddedPartsMap>(new Map());
@@ -56,6 +117,90 @@ function App() {
   const [progress, setProgress] = useState(0);
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
+  // Tag rules: keyed by the raw tag value produced by the itemTags template.
+  // `import` false + `remapTo` empty  = drop the tag entirely.
+  // `import` false + `remapTo` set    = replace with those 1+ tag names (fan-out).
+  // `import` true                     = pass through unchanged.
+  const [tagRules, setTagRules] = useState<Record<string, { import: boolean; remapTo: string[] }>>(() => {
+    try {
+      const raw = localStorage.getItem("dash.tagRules");
+      if (raw) {
+        const parsed = JSON.parse(raw) as Record<string, { import: boolean; remapTo: string | string[] }>;
+        const migrated: Record<string, { import: boolean; remapTo: string[] }> = {};
+        for (const [k, v] of Object.entries(parsed)) {
+          const arr = Array.isArray(v.remapTo)
+            ? v.remapTo.filter((s) => s && s.trim())
+            : (v.remapTo && v.remapTo.trim() ? [v.remapTo.trim()] : []);
+          migrated[k] = { import: !!v.import, remapTo: arr };
+        }
+        return migrated;
+      }
+    } catch { /* ignore */ }
+    return {};
+  });
+  useEffect(() => {
+    try { localStorage.setItem("dash.tagRules", JSON.stringify(tagRules)); } catch { /* ignore */ }
+  }, [tagRules]);
+
+  // Which Totescan fields feed the Tags tab. Applied (active) vs. draft
+  // controlled by checkboxes; user clicks Refresh to promote draft → active
+  // so partially-configured rows aren't disrupted mid-edit.
+  const DEFAULT_TAG_SOURCES: TagSources = { title: true, location: true, profile: true };
+  const [tagSources, setTagSources] = useState<TagSources>(() => {
+    try {
+      const raw = localStorage.getItem("dash.tagSources");
+      if (raw) return { ...DEFAULT_TAG_SOURCES, ...JSON.parse(raw) };
+    } catch { /* ignore */ }
+    return DEFAULT_TAG_SOURCES;
+  });
+  const [tagSourcesDraft, setTagSourcesDraft] = useState<TagSources>(tagSources);
+  useEffect(() => {
+    try { localStorage.setItem("dash.tagSources", JSON.stringify(tagSources)); } catch { /* ignore */ }
+  }, [tagSources]);
+
+  // Location rules: keyed by the rendered location name for each tote.
+  // `import` true = create/use as-is.
+  // `import` false + `remapTo` set = send items to the named location instead.
+  // `import` false + `remapTo` empty = skip the entire tote (items dropped).
+  const [locationRules, setLocationRules] = useState<Record<string, { import: boolean; remapTo: string }>>(() => {
+    try {
+      const raw = localStorage.getItem("dash.locationRules");
+      if (raw) return JSON.parse(raw);
+    } catch { /* ignore */ }
+    return {};
+  });
+  useEffect(() => {
+    try { localStorage.setItem("dash.locationRules", JSON.stringify(locationRules)); } catch { /* ignore */ }
+  }, [locationRules]);
+
+  // Location sources (which Totescan fields feed location names). Same
+  // draft-then-Refresh pattern as tag sources so partially-configured rows
+  // aren't disrupted mid-edit.
+  const [locationSources, setLocationSources] = useState<LocationSources>(() => {
+    try {
+      const raw = localStorage.getItem("dash.locationSources");
+      if (raw) return { ...DEFAULT_LOCATION_SOURCES, ...JSON.parse(raw) };
+    } catch { /* ignore */ }
+    return DEFAULT_LOCATION_SOURCES;
+  });
+  const [locationSourcesDraft, setLocationSourcesDraft] = useState<LocationSources>(locationSources);
+  useEffect(() => {
+    try { localStorage.setItem("dash.locationSources", JSON.stringify(locationSources)); } catch { /* ignore */ }
+  }, [locationSources]);
+
+  // Per-conflict override: when a tote has 2+ enabled sources with different
+  // values, this maps the conflict key → chosen source key. Default pick is
+  // priority-order (Location → Title → Profile).
+  const [locationConflictRules, setLocationConflictRules] = useState<Record<string, keyof LocationSources>>(() => {
+    try {
+      const raw = localStorage.getItem("dash.locationConflictRules");
+      if (raw) return JSON.parse(raw);
+    } catch { /* ignore */ }
+    return {};
+  });
+  useEffect(() => {
+    try { localStorage.setItem("dash.locationConflictRules", JSON.stringify(locationConflictRules)); } catch { /* ignore */ }
+  }, [locationConflictRules]);
 
   const selectedTotes = useMemo(
     () => totes.filter((t) => selectedIds.has(t.toteId)),
@@ -65,6 +210,66 @@ function App() {
     () => selectedTotes.reduce((n, t) => n + t.items.length, 0),
     [selectedTotes],
   );
+
+  // Distinct tag values (with usage counts) derived from the ACTIVE tag
+  // sources (Title / Location / Profile). Users toggle draft checkboxes and
+  // click Refresh to promote to active, so mid-edit rows aren't disrupted.
+  const distinctTags = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const tote of totes) {
+      const sourceValues: string[] = [];
+      if (tagSources.title && tote.title.trim()) sourceValues.push(tote.title.trim());
+      if (tagSources.location && tote.location.trim()) sourceValues.push(tote.location.trim());
+      if (tagSources.profile && tote.profile.trim()) sourceValues.push(tote.profile.trim());
+      const perTote = Array.from(new Set(sourceValues));
+      for (const item of tote.items) {
+        void item;
+        for (const t of perTote) counts.set(t, (counts.get(t) ?? 0) + 1);
+      }
+    }
+    return Array.from(counts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [totes, tagSources]);
+
+  // Distinct location names derived from the enabled location sources
+  // (with conflict overrides applied). Falls back to the locationName
+  // template only when no sources are enabled.
+  const distinctLocations = useMemo(() => {
+    const counts = new Map<string, { totes: number; items: number }>();
+    for (const tote of totes) {
+      const name = pickLocationName(tote, locationSources, locationConflictRules, mapping);
+      const prev = counts.get(name) ?? { totes: 0, items: 0 };
+      counts.set(name, { totes: prev.totes + 1, items: prev.items + tote.items.length });
+    }
+    return Array.from(counts.entries())
+      .map(([name, v]) => ({ name, totes: v.totes, items: v.items }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [totes, locationSources, locationConflictRules, mapping]);
+
+  // Totes with 2+ enabled sources that disagree, grouped by the unique
+  // combination of source values so users only resolve each combo once.
+  const locationConflicts = useMemo(() => {
+    const groups = new Map<string, {
+      key: string;
+      totes: number;
+      items: number;
+      values: Partial<Record<keyof LocationSources, string>>;
+    }>();
+    for (const tote of totes) {
+      const cands = locationCandidatesFor(tote, locationSources);
+      if (new Set(cands.map((c) => c.value)).size < 2) continue;
+      const key = locationConflictKey(tote, locationSources);
+      const prev = groups.get(key);
+      if (prev) { prev.totes += 1; prev.items += tote.items.length; }
+      else {
+        const values: Partial<Record<keyof LocationSources, string>> = {};
+        for (const c of cands) values[c.src] = c.value;
+        groups.set(key, { key, totes: 1, items: tote.items.length, values });
+      }
+    }
+    return Array.from(groups.values()).sort((a, b) => b.items - a.items);
+  }, [totes, locationSources]);
 
   async function handleFile(file: File) {
     try {
@@ -177,8 +382,23 @@ function App() {
         parentToteId: tote.parentToteId,
         dateUpdated: tote.dateUpdated,
       };
-      const locName = renderTemplate(mapping.locationName, toteVars).trim() || tote.title || tote.toteId;
+      const rawLocName = pickLocationName(tote, locationSources, locationConflictRules, mapping);
       const locDesc = renderTemplate(mapping.locationDescription, toteVars);
+
+      // Apply user-defined location rules (skip / remap).
+      const locRule = locationRules[rawLocName];
+      let locName = rawLocName;
+      if (locRule && !locRule.import) {
+        const target = locRule.remapTo.trim();
+        if (!target) {
+          log({ level: "info", text: `= Skipped tote "${tote.title || tote.toteId}" (location "${rawLocName}" set to skip, ${tote.items.length} items dropped)` });
+          bumpProgress();
+          for (let i = 0; i < tote.items.length; i++) bumpProgress();
+          continue;
+        }
+        locName = target;
+        log({ level: "info", text: `~ Remapped location "${rawLocName}" → "${locName}"` });
+      }
 
       let locationId: string;
       try {
@@ -226,9 +446,20 @@ function App() {
         const qtyNum = qtyStr ? parseInt(qtyStr, 10) : item.quantity;
         const quantity = Number.isFinite(qtyNum) && qtyNum > 0 ? qtyNum : item.quantity;
         const assetId = mapping.itemAssetId ? renderTemplate(mapping.itemAssetId, itemVars).trim() : undefined;
-        const tagNames = mapping.itemTags
-          ? renderTemplate(mapping.itemTags, itemVars).split(",").map((s) => s.trim()).filter(Boolean)
-          : [];
+        const rawTagNames: string[] = [];
+        if (tagSources.title && tote.title.trim()) rawTagNames.push(tote.title.trim());
+        if (tagSources.location && tote.location.trim()) rawTagNames.push(tote.location.trim());
+        if (tagSources.profile && tote.profile.trim()) rawTagNames.push(tote.profile.trim());
+        // Apply user-defined tag rules (skip / remap).
+        const resolvedTagNames: string[] = [];
+        for (const raw of rawTagNames) {
+          const rule = tagRules[raw];
+          if (!rule || rule.import) { resolvedTagNames.push(raw); continue; }
+          const targets = (rule.remapTo ?? []).map((s) => s.trim()).filter(Boolean);
+          for (const t of targets) resolvedTagNames.push(t);
+          // if targets empty: dropped entirely
+        }
+        const tagNames = Array.from(new Set(resolvedTagNames));
 
         // Build custom fields: user-defined + always-on import_ref.
         const customFields: HomeboxCustomField[] = [];
@@ -321,23 +552,14 @@ function App() {
 
       <main className="mx-auto max-w-[1600px] px-6 py-8">
         <AppTabs
-          tabs={[
-            {
-              value: "upload",
-              label: "1. Upload",
-              icon: <FileText className="h-4 w-4" />,
-              content: (
+          render={({ active }) => (
+            <>
+              {active === "upload" && (
                 <DashboardSection id="upload" title="Upload export" icon={<FileText className="h-4 w-4" />} defaultOpen className="md:col-span-2">
                   <StepUpload onFile={handleFile} />
                 </DashboardSection>
-              ),
-            },
-            {
-              value: "review",
-              label: "2. Review",
-              icon: <Package className="h-4 w-4" />,
-              badge: totes.length > 0 ? `${selectedIds.size}/${totes.length}` : undefined,
-              content: (
+              )}
+              {active === "review" && (
                 <DashboardSection
                   id="review"
                   title="Review totes"
@@ -352,13 +574,8 @@ function App() {
                     <StepReview totes={totes} selectedIds={selectedIds} setSelectedIds={setSelectedIds} />
                   )}
                 </DashboardSection>
-              ),
-            },
-            {
-              value: "mapping",
-              label: "3. Mapping",
-              icon: <Settings2 className="h-4 w-4" />,
-              content: (
+              )}
+              {active === "mapping" && (
                 <DashboardSection
                   id="mapping"
                   title="Field mapping"
@@ -368,14 +585,53 @@ function App() {
                 >
                   <StepMapping mapping={mapping} setMapping={setMapping} sampleTote={selectedTotes[0] ?? totes[0]} />
                 </DashboardSection>
-              ),
-            },
-            {
-              value: "connection",
-              label: "4. Connection",
-              icon: <Send className="h-4 w-4" />,
-              badge: client ? "connected" : undefined,
-              content: (
+              )}
+              {active === "locations" && (
+                <DashboardSection
+                  id="locations"
+                  title="Location import & remapping"
+                  icon={<MapPin className="h-4 w-4" />}
+                  badge={distinctLocations.length > 0 ? String(distinctLocations.length) : undefined}
+                  defaultOpen
+                  className="md:col-span-2"
+                >
+                  <StepLocations
+                    distinctLocations={distinctLocations}
+                    locationRules={locationRules}
+                    setLocationRules={setLocationRules}
+                    existingLocations={existingLocations}
+                    locationSourcesDraft={locationSourcesDraft}
+                    setLocationSourcesDraft={setLocationSourcesDraft}
+                    locationSources={locationSources}
+                    onRefresh={() => setLocationSources(locationSourcesDraft)}
+                    conflicts={locationConflicts}
+                    conflictRules={locationConflictRules}
+                    setConflictRules={setLocationConflictRules}
+                  />
+                </DashboardSection>
+              )}
+              {active === "tags" && (
+                <DashboardSection
+                  id="tags"
+                  title="Tag import & remapping"
+                  icon={<TagIcon className="h-4 w-4" />}
+                  badge={distinctTags.length > 0 ? String(distinctTags.length) : undefined}
+                  defaultOpen
+                  className="md:col-span-2"
+                >
+                  <StepTags
+                    distinctTags={distinctTags}
+                    tagRules={tagRules}
+                    setTagRules={setTagRules}
+                    existingLabels={existingLabels}
+                    tagSourcesDraft={tagSourcesDraft}
+                    setTagSourcesDraft={setTagSourcesDraft}
+                    tagSources={tagSources}
+                    onRefresh={() => setTagSources(tagSourcesDraft)}
+                  />
+                </DashboardSection>
+              )}
+              {active === "connection" && (
                 <DashboardSection
                   id="connection"
                   title="Homebox connection"
@@ -393,14 +649,8 @@ function App() {
                     running={running}
                   />
                 </DashboardSection>
-              ),
-            },
-            {
-              value: "import",
-              label: "5. Import",
-              icon: <Boxes className="h-4 w-4" />,
-              badge: running ? `${progress}%` : done ? "done" : undefined,
-              content: (
+              )}
+              {active === "import" && (
                 <DashboardSection
                   id="import"
                   title="Run import"
@@ -420,26 +670,31 @@ function App() {
                     onRun={runImport}
                   />
                 </DashboardSection>
-              ),
-            },
-            {
-              value: "diagnostics",
-              label: "Diagnostics",
-              icon: <Settings2 className="h-4 w-4" />,
-              badge: diagnostics.length > 0 ? String(diagnostics.length) : undefined,
-              content: (
+              )}
+              {active === "diagnostics" && (
                 <DashboardSection
                   id="diagnostics"
                   title="Diagnostics"
                   icon={<Settings2 className="h-4 w-4" />}
                   badge={diagnostics.length > 0 ? String(diagnostics.length) : undefined}
                   defaultOpen
+                  persistOpen={false}
                   className="md:col-span-2"
                 >
                   <DiagnosticsPanel entries={diagnostics} onClear={() => setDiagnostics([])} client={client} />
                 </DashboardSection>
-              ),
-            },
+              )}
+            </>
+          )}
+          tabs={[
+            { value: "upload", label: "1. Upload", icon: <FileText className="h-4 w-4" /> },
+            { value: "review", label: "2. Review", icon: <Package className="h-4 w-4" />, badge: totes.length > 0 ? `${selectedIds.size}/${totes.length}` : undefined },
+            { value: "mapping", label: "3. Mapping", icon: <Settings2 className="h-4 w-4" /> },
+            { value: "locations", label: "4. Locations", icon: <MapPin className="h-4 w-4" />, badge: distinctLocations.length > 0 ? String(distinctLocations.length) : undefined },
+            { value: "tags", label: "5. Tags", icon: <TagIcon className="h-4 w-4" />, badge: distinctTags.length > 0 ? String(distinctTags.length) : undefined },
+            { value: "connection", label: "6. Connection", icon: <Send className="h-4 w-4" />, badge: client ? "connected" : undefined },
+            { value: "import", label: "7. Import", icon: <Boxes className="h-4 w-4" />, badge: running ? `${progress}%` : done ? "done" : undefined },
+            { value: "diagnostics", label: "Diagnostics", icon: <Settings2 className="h-4 w-4" />, badge: diagnostics.length > 0 ? String(diagnostics.length) : undefined },
           ]}
         />
       </main>
@@ -449,8 +704,10 @@ function App() {
 
 function AppTabs({
   tabs,
+  render,
 }: {
-  tabs: Array<{ value: string; label: string; icon?: ReactNode; badge?: string; content: ReactNode }>;
+  tabs: Array<{ value: string; label: string; icon?: ReactNode; badge?: string }>;
+  render: (props: { active: string }) => ReactNode;
 }) {
   const storageKey = "dash.activeTab";
   const [active, setActive] = useState(tabs[0]?.value ?? "upload");
@@ -501,11 +758,7 @@ function AppTabs({
           );
         })}
       </div>
-      {tabs.map((t) => (
-        <div key={t.value} hidden={t.value !== active} className="grid gap-5 md:grid-cols-2">
-          {t.content}
-        </div>
-      ))}
+      <div className="grid gap-5 md:grid-cols-2">{render({ active })}</div>
     </div>
   );
 }
@@ -524,6 +777,7 @@ function DashboardSection({
   icon,
   badge,
   defaultOpen = true,
+  persistOpen = true,
   className,
   children,
 }: {
@@ -532,6 +786,7 @@ function DashboardSection({
   icon?: ReactNode;
   badge?: string;
   defaultOpen?: boolean;
+  persistOpen?: boolean;
   className?: string;
   children: ReactNode;
 }) {
@@ -540,6 +795,10 @@ function DashboardSection({
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
+    if (!persistOpen) {
+      setHydrated(true);
+      return;
+    }
     try {
       const raw = localStorage.getItem(storageKey);
       if (raw !== null) setOpen(raw === "1");
@@ -547,16 +806,16 @@ function DashboardSection({
       // ignore
     }
     setHydrated(true);
-  }, [storageKey]);
+  }, [storageKey, persistOpen]);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || !persistOpen) return;
     try {
       localStorage.setItem(storageKey, open ? "1" : "0");
     } catch {
       // ignore
     }
-  }, [open, hydrated, storageKey]);
+  }, [open, hydrated, storageKey, persistOpen]);
 
   return (
     <section className={`rounded-lg border border-border bg-card ${className ?? ""}`}>
@@ -1252,3 +1511,474 @@ function DiagBlock({ label, body, tone }: { label: string; body: string; tone?: 
     </div>
   );
 }
+
+function TagChipInput({
+  value,
+  onChange,
+  disabled,
+  placeholder,
+  datalistId,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  datalistId?: string;
+}) {
+  const [draft, setDraft] = useState("");
+
+  function commit(raw: string) {
+    const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parts.length === 0) return;
+    const merged = [...value];
+    for (const p of parts) {
+      if (!merged.some((x) => x.toLowerCase() === p.toLowerCase())) merged.push(p);
+    }
+    onChange(merged);
+    setDraft("");
+  }
+
+  function removeAt(i: number) {
+    const next = value.slice();
+    next.splice(i, 1);
+    onChange(next);
+  }
+
+  return (
+    <div
+      className={`flex min-h-8 flex-wrap items-center gap-1 rounded-md border border-input bg-background px-2 py-1 text-sm ${
+        disabled ? "opacity-50" : ""
+      }`}
+    >
+      {value.map((chip, i) => (
+        <span
+          key={`${chip}-${i}`}
+          className="inline-flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary"
+        >
+          {chip}
+          {!disabled && (
+            <button
+              type="button"
+              className="text-primary/70 hover:text-primary"
+              onClick={() => removeAt(i)}
+              aria-label={`Remove ${chip}`}
+            >
+              ×
+            </button>
+          )}
+        </span>
+      ))}
+      <input
+        list={datalistId}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === ",") {
+            e.preventDefault();
+            commit(draft);
+          } else if (e.key === "Backspace" && draft === "" && value.length > 0) {
+            e.preventDefault();
+            removeAt(value.length - 1);
+          }
+        }}
+        onBlur={() => { if (draft.trim()) commit(draft); }}
+        disabled={disabled}
+        placeholder={value.length === 0 ? placeholder : ""}
+        className="flex-1 min-w-[8ch] bg-transparent outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
+      />
+    </div>
+  );
+}
+
+function StepTags({
+  distinctTags,
+  tagRules,
+  setTagRules,
+  existingLabels,
+  tagSourcesDraft,
+  setTagSourcesDraft,
+  tagSources,
+  onRefresh,
+}: {
+  distinctTags: Array<{ name: string; count: number }>;
+  tagRules: Record<string, { import: boolean; remapTo: string[] }>;
+  setTagRules: (r: Record<string, { import: boolean; remapTo: string[] }>) => void;
+  existingLabels: HomeboxLabel[];
+  tagSourcesDraft: TagSources;
+  setTagSourcesDraft: (s: TagSources) => void;
+  tagSources: TagSources;
+  onRefresh: () => void;
+}) {
+  const [filter, setFilter] = useState("");
+
+  const dirty = TAG_SOURCE_KEYS.some((k) => tagSourcesDraft[k] !== tagSources[k]);
+
+  function setRule(name: string, patch: Partial<{ import: boolean; remapTo: string[] }>) {
+    const prev = tagRules[name] ?? { import: true, remapTo: [] as string[] };
+    setTagRules({ ...tagRules, [name]: { ...prev, ...patch } });
+  }
+
+  const filtered = distinctTags.filter((t) =>
+    !filter.trim() ? true : t.name.toLowerCase().includes(filter.trim().toLowerCase()),
+  );
+
+  const importedCount = distinctTags.filter((t) => (tagRules[t.name]?.import ?? true)).length;
+  const remappedCount = distinctTags.filter((t) => {
+    const r = tagRules[t.name];
+    return !!(r && !r.import && r.remapTo.length > 0);
+  }).length;
+  const skippedCount = distinctTags.filter((t) => {
+    const r = tagRules[t.name];
+    return !!(r && !r.import && r.remapTo.length === 0);
+  }).length;
+
+  const sourcesBlock = (
+    <div className="mb-4 flex flex-wrap items-center gap-4 rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+      <div className="text-xs font-medium text-muted-foreground">Tag sources:</div>
+      {TAG_SOURCE_KEYS.map((k) => (
+        <label key={k} className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-primary"
+            checked={tagSourcesDraft[k]}
+            onChange={(e) => setTagSourcesDraft({ ...tagSourcesDraft, [k]: e.target.checked })}
+          />
+          {TAG_SOURCE_LABELS[k]}
+        </label>
+      ))}
+      <div className="ml-auto flex items-center gap-2">
+        {dirty && <span className="text-[11px] text-muted-foreground">unsaved changes</span>}
+        <Button size="sm" variant={dirty ? "default" : "outline"} onClick={onRefresh} disabled={!dirty}>
+          Refresh
+        </Button>
+      </div>
+    </div>
+  );
+
+  if (distinctTags.length === 0) {
+    return (
+      <div>
+        {sourcesBlock}
+        <EmptyHint text="Upload an export and enable at least one tag source above to see distinct tags here." />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {sourcesBlock}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">{distinctTags.length}</span> distinct ·{" "}
+          <span className="text-primary">{importedCount} imported</span> ·{" "}
+          <span>{remappedCount} remapped</span> ·{" "}
+          <span className="text-destructive">{skippedCount} skipped</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter tags…"
+            className="h-8 w-52 text-sm"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setTagRules({})}
+            disabled={Object.keys(tagRules).length === 0}
+          >
+            Reset all
+          </Button>
+        </div>
+      </div>
+
+      <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+        Turn a tag <span className="font-medium">off</span> to skip it during import. When off, type or pick
+        another tag name to <span className="font-medium">remap</span> every item that used the skipped tag
+        onto that replacement (e.g. drop <em>Front Porch</em> and remap onto <em>Porch</em>). Leave the
+        remap blank to drop the tag entirely.
+      </p>
+
+      <div className="overflow-hidden rounded-md border border-border/60">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/40 text-[11px] uppercase tracking-wider text-muted-foreground">
+            <tr>
+              <th className="px-3 py-2 text-left">Totescan tag</th>
+              <th className="px-3 py-2 text-left">Uses</th>
+              <th className="px-3 py-2 text-left">Import</th>
+              <th className="px-3 py-2 text-left">Remap to (when not imported)</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/60">
+            {filtered.map((t) => {
+              const rule = tagRules[t.name] ?? { import: true, remapTo: [] as string[] };
+              const willImport = rule.import;
+              return (
+                <tr key={t.name} className={willImport ? "" : "bg-background/60"}>
+                  <td className="px-3 py-2 font-medium">{t.name}</td>
+                  <td className="px-3 py-2 text-xs text-muted-foreground">{t.count}</td>
+                  <td className="px-3 py-2">
+                    <Switch
+                      checked={willImport}
+                      onCheckedChange={(v) => setRule(t.name, { import: v })}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <TagChipInput
+                      value={rule.remapTo}
+                      onChange={(next) => setRule(t.name, { remapTo: next })}
+                      disabled={willImport}
+                      placeholder={willImport ? "—" : "type tag + Enter (leave empty to drop)"}
+                      datalistId="tag-remap-options"
+                    />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <datalist id="tag-remap-options">
+        {distinctTags.map((t) => (
+          <option key={`d-${t.name}`} value={t.name} />
+        ))}
+        {existingLabels.map((l) => (
+          <option key={`h-${l.id}`} value={l.name} />
+        ))}
+      </datalist>
+    </div>
+  );
+}
+
+function StepLocations({
+  distinctLocations,
+  locationRules,
+  setLocationRules,
+  existingLocations,
+  locationSourcesDraft,
+  setLocationSourcesDraft,
+  locationSources,
+  onRefresh,
+  conflicts,
+  conflictRules,
+  setConflictRules,
+}: {
+  distinctLocations: Array<{ name: string; totes: number; items: number }>;
+  locationRules: Record<string, { import: boolean; remapTo: string }>;
+  setLocationRules: (r: Record<string, { import: boolean; remapTo: string }>) => void;
+  existingLocations: HomeboxLocation[];
+  locationSourcesDraft: LocationSources;
+  setLocationSourcesDraft: (s: LocationSources) => void;
+  locationSources: LocationSources;
+  onRefresh: () => void;
+  conflicts: Array<{ key: string; totes: number; items: number; values: Partial<Record<keyof LocationSources, string>> }>;
+  conflictRules: Record<string, keyof LocationSources>;
+  setConflictRules: (r: Record<string, keyof LocationSources>) => void;
+}) {
+  const [filter, setFilter] = useState("");
+
+  const dirty = LOCATION_SOURCE_KEYS.some((k) => locationSourcesDraft[k] !== locationSources[k]);
+
+  function setRule(name: string, patch: Partial<{ import: boolean; remapTo: string }>) {
+    const prev = locationRules[name] ?? { import: true, remapTo: "" };
+    setLocationRules({ ...locationRules, [name]: { ...prev, ...patch } });
+  }
+
+  function defaultConflictPick(values: Partial<Record<keyof LocationSources, string>>): keyof LocationSources {
+    for (const k of LOCATION_SOURCE_KEYS) {
+      if (values[k]) return k;
+    }
+    return LOCATION_SOURCE_KEYS[0];
+  }
+
+  const filtered = distinctLocations.filter((l) =>
+    !filter.trim() ? true : l.name.toLowerCase().includes(filter.trim().toLowerCase()),
+  );
+
+  const importedCount = distinctLocations.filter((l) => (locationRules[l.name]?.import ?? true)).length;
+  const remappedCount = distinctLocations.filter((l) => {
+    const r = locationRules[l.name];
+    return r && !r.import && r.remapTo.trim();
+  }).length;
+  const skippedCount = distinctLocations.filter((l) => {
+    const r = locationRules[l.name];
+    return r && !r.import && !r.remapTo.trim();
+  }).length;
+
+  const sourcesBlock = (
+    <div className="mb-4 flex flex-wrap items-center gap-4 rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+      <div className="text-xs font-medium text-muted-foreground">Location sources:</div>
+      {LOCATION_SOURCE_KEYS.map((k) => (
+        <label key={k} className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-primary"
+            checked={locationSourcesDraft[k]}
+            onChange={(e) => setLocationSourcesDraft({ ...locationSourcesDraft, [k]: e.target.checked })}
+          />
+          {LOCATION_SOURCE_LABELS[k]}
+        </label>
+      ))}
+      <div className="ml-auto flex items-center gap-2">
+        {dirty && <span className="text-[11px] text-muted-foreground">unsaved changes</span>}
+        <Button size="sm" variant={dirty ? "default" : "outline"} onClick={onRefresh} disabled={!dirty}>
+          Refresh
+        </Button>
+      </div>
+    </div>
+  );
+
+  const conflictsBlock = conflicts.length > 0 && (
+    <div className="mb-6 overflow-hidden rounded-md border border-amber-500/40 bg-amber-500/5">
+      <div className="border-b border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs">
+        <span className="font-medium text-amber-200">{conflicts.length} conflict{conflicts.length === 1 ? "" : "s"}</span>{" "}
+        <span className="text-muted-foreground">
+          — these totes have values in 2+ enabled sources. Pick which source to use (default = priority: Location → Title → Profile).
+        </span>
+      </div>
+      <table className="w-full text-sm">
+        <thead className="bg-muted/40 text-[11px] uppercase tracking-wider text-muted-foreground">
+          <tr>
+            {LOCATION_SOURCE_KEYS.map((k) => (
+              <th key={k} className="px-3 py-2 text-left">{LOCATION_SOURCE_LABELS[k]}</th>
+            ))}
+            <th className="px-3 py-2 text-left">Totes</th>
+            <th className="px-3 py-2 text-left">Items</th>
+            <th className="px-3 py-2 text-left">Use source</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border/60">
+          {conflicts.map((c) => {
+            const pick = conflictRules[c.key] ?? defaultConflictPick(c.values);
+            return (
+              <tr key={c.key}>
+                {LOCATION_SOURCE_KEYS.map((k) => (
+                  <td key={k} className={`px-3 py-2 text-xs ${pick === k ? "font-medium text-foreground" : "text-muted-foreground"}`}>
+                    {c.values[k] ?? <span className="italic opacity-50">—</span>}
+                  </td>
+                ))}
+                <td className="px-3 py-2 text-xs text-muted-foreground">{c.totes}</td>
+                <td className="px-3 py-2 text-xs text-muted-foreground">{c.items}</td>
+                <td className="px-3 py-2">
+                  <div className="flex gap-1">
+                    {LOCATION_SOURCE_KEYS.filter((k) => c.values[k]).map((k) => (
+                      <Button
+                        key={k}
+                        size="sm"
+                        variant={pick === k ? "default" : "outline"}
+                        className="h-7 px-2 text-xs"
+                        onClick={() => setConflictRules({ ...conflictRules, [c.key]: k })}
+                      >
+                        {LOCATION_SOURCE_LABELS[k]}
+                      </Button>
+                    ))}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  if (distinctLocations.length === 0) {
+    return (
+      <div>
+        {sourcesBlock}
+        <EmptyHint text="Upload an export and enable at least one location source above to see distinct locations here." />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {sourcesBlock}
+      {conflictsBlock}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">{distinctLocations.length}</span> distinct ·{" "}
+          <span className="text-primary">{importedCount} imported</span> ·{" "}
+          <span>{remappedCount} remapped</span> ·{" "}
+          <span className="text-destructive">{skippedCount} skipped</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter locations…"
+            className="h-8 w-52 text-sm"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setLocationRules({})}
+            disabled={Object.keys(locationRules).length === 0}
+          >
+            Reset all
+          </Button>
+        </div>
+      </div>
+
+      <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+        Turn a location <span className="font-medium">off</span> to skip it during import. When off, type
+        or pick another location name to <span className="font-medium">remap</span> every tote using that
+        location onto the replacement (existing Homebox locations autocomplete). Leave the remap blank to
+        skip the tote and its items entirely.
+      </p>
+
+      <div className="overflow-hidden rounded-md border border-border/60">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/40 text-[11px] uppercase tracking-wider text-muted-foreground">
+            <tr>
+              <th className="px-3 py-2 text-left">Totescan location</th>
+              <th className="px-3 py-2 text-left">Totes</th>
+              <th className="px-3 py-2 text-left">Items</th>
+              <th className="px-3 py-2 text-left">Import</th>
+              <th className="px-3 py-2 text-left">Remap to (when not imported)</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/60">
+            {filtered.map((l) => {
+              const rule = locationRules[l.name] ?? { import: true, remapTo: "" };
+              const willImport = rule.import;
+              return (
+                <tr key={l.name} className={willImport ? "" : "bg-background/60"}>
+                  <td className="px-3 py-2 font-medium">{l.name}</td>
+                  <td className="px-3 py-2 text-xs text-muted-foreground">{l.totes}</td>
+                  <td className="px-3 py-2 text-xs text-muted-foreground">{l.items}</td>
+                  <td className="px-3 py-2">
+                    <Switch
+                      checked={willImport}
+                      onCheckedChange={(v) => setRule(l.name, { import: v })}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <Input
+                      list="location-remap-options"
+                      value={rule.remapTo}
+                      onChange={(e) => setRule(l.name, { remapTo: e.target.value })}
+                      disabled={willImport}
+                      placeholder={willImport ? "—" : "leave blank to skip tote"}
+                      className="h-8 text-sm"
+                    />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <datalist id="location-remap-options">
+        {distinctLocations.map((l) => (
+          <option key={`d-${l.name}`} value={l.name} />
+        ))}
+        {existingLocations.map((l) => (
+          <option key={`h-${l.id}`} value={l.name} />
+        ))}
+      </datalist>
+    </div>
+  );
+}
+
+
