@@ -261,6 +261,8 @@ export class HomeboxClient {
     fields?: HomeboxCustomField[];
   }): Promise<HomeboxItem> {
     if (!this.itemTypeId) await this.ensureEntityTypes();
+    // EntityCreate schema does not accept `fields` or `assetId` — those
+    // must be applied via a follow-up PUT to /entities/{id}.
     const body: Record<string, unknown> = {
       name: payload.name,
       description: payload.description ?? "",
@@ -269,15 +271,18 @@ export class HomeboxClient {
       quantity: payload.quantity ?? 1,
     };
     if (payload.labelIds && payload.labelIds.length > 0) body.tagIds = payload.labelIds;
-    if (payload.fields && payload.fields.length > 0) body.fields = normalizeFields(payload.fields);
     const r = await this.request("POST", `/api/v1/entities`, { jsonBody: body });
     if (!r.ok) throw new Error(`Create item failed: ${r.status} ${await safeText(r)}`);
     const out = await r.json();
-    if (payload.assetId) {
+    const needsPatch = (payload.fields && payload.fields.length > 0) || !!payload.assetId;
+    if (needsPatch) {
       try {
-        await this.updateItem(out.id, { assetId: payload.assetId });
+        await this.updateItem(out.id, {
+          assetId: payload.assetId,
+          fields: payload.fields,
+        });
       } catch {
-        /* non-fatal */
+        /* non-fatal — creation succeeded */
       }
     }
     return { id: out.id, name: out.name };
