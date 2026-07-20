@@ -200,6 +200,7 @@ function App() {
           : [];
         try {
           const labelIds = tagNames.length > 0 ? await resolveLabelIds(tagNames) : [];
+          client.setPhase(`import:createItem "${itemName}"`);
           const created = await client.createItem({
             name: itemName,
             description: itemDesc,
@@ -210,6 +211,7 @@ function App() {
           });
           if (itemNotes || labelIds.length > 0 || quantity !== 1) {
             try {
+              client.setPhase(`import:updateItem "${itemName}"`);
               await client.updateItem(created.id, {
                 notes: itemNotes || undefined,
                 quantity,
@@ -225,6 +227,7 @@ function App() {
               try {
                 const blob = await fetchImageAsBlob(url);
                 const filename = url.split("/").pop()?.split("?")[0] ?? "photo.jpg";
+                client.setPhase(`import:uploadAttachment "${filename}"`);
                 await client.uploadAttachment(created.id, blob, filename);
                 log({ level: "ok", text: `      photo ${filename}` });
               } catch (e) {
