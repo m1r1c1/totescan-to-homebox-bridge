@@ -120,6 +120,24 @@ function App() {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [totes, mapping.itemTags]);
 
+  // Distinct location names rendered from the current locationName template
+  // across all parsed totes, with item counts for context.
+  const distinctLocations = useMemo(() => {
+    const counts = new Map<string, { totes: number; items: number }>();
+    for (const tote of totes) {
+      const toteVars = {
+        toteId: tote.toteId, title: tote.title, location: tote.location,
+        profile: tote.profile, parentToteId: tote.parentToteId, dateUpdated: tote.dateUpdated,
+      };
+      const name = (renderTemplate(mapping.locationName, toteVars).trim() || tote.title || tote.toteId);
+      const prev = counts.get(name) ?? { totes: 0, items: 0 };
+      counts.set(name, { totes: prev.totes + 1, items: prev.items + tote.items.length });
+    }
+    return Array.from(counts.entries())
+      .map(([name, v]) => ({ name, totes: v.totes, items: v.items }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [totes, mapping.locationName]);
+
   async function handleFile(file: File) {
     try {
       const parsed = await parseTotescanFile(file);
