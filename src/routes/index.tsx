@@ -418,23 +418,14 @@ function App() {
 
       <main className="mx-auto max-w-[1600px] px-6 py-8">
         <AppTabs
-          tabs={[
-            {
-              value: "upload",
-              label: "1. Upload",
-              icon: <FileText className="h-4 w-4" />,
-              content: (
+          render={({ active }) => (
+            <>
+              {active === "upload" && (
                 <DashboardSection id="upload" title="Upload export" icon={<FileText className="h-4 w-4" />} defaultOpen className="md:col-span-2">
                   <StepUpload onFile={handleFile} />
                 </DashboardSection>
-              ),
-            },
-            {
-              value: "review",
-              label: "2. Review",
-              icon: <Package className="h-4 w-4" />,
-              badge: totes.length > 0 ? `${selectedIds.size}/${totes.length}` : undefined,
-              content: (
+              )}
+              {active === "review" && (
                 <DashboardSection
                   id="review"
                   title="Review totes"
@@ -449,13 +440,8 @@ function App() {
                     <StepReview totes={totes} selectedIds={selectedIds} setSelectedIds={setSelectedIds} />
                   )}
                 </DashboardSection>
-              ),
-            },
-            {
-              value: "mapping",
-              label: "3. Mapping",
-              icon: <Settings2 className="h-4 w-4" />,
-              content: (
+              )}
+              {active === "mapping" && (
                 <DashboardSection
                   id="mapping"
                   title="Field mapping"
@@ -465,14 +451,8 @@ function App() {
                 >
                   <StepMapping mapping={mapping} setMapping={setMapping} sampleTote={selectedTotes[0] ?? totes[0]} />
                 </DashboardSection>
-              ),
-            },
-            {
-              value: "locations",
-              label: "4. Locations",
-              icon: <MapPin className="h-4 w-4" />,
-              badge: distinctLocations.length > 0 ? String(distinctLocations.length) : undefined,
-              content: (
+              )}
+              {active === "locations" && (
                 <DashboardSection
                   id="locations"
                   title="Location import & remapping"
@@ -488,14 +468,8 @@ function App() {
                     existingLocations={existingLocations}
                   />
                 </DashboardSection>
-              ),
-            },
-            {
-              value: "tags",
-              label: "5. Tags",
-              icon: <TagIcon className="h-4 w-4" />,
-              badge: distinctTags.length > 0 ? String(distinctTags.length) : undefined,
-              content: (
+              )}
+              {active === "tags" && (
                 <DashboardSection
                   id="tags"
                   title="Tag import & remapping"
@@ -511,14 +485,8 @@ function App() {
                     existingLabels={existingLabels}
                   />
                 </DashboardSection>
-              ),
-            },
-            {
-              value: "connection",
-              label: "6. Connection",
-              icon: <Send className="h-4 w-4" />,
-              badge: client ? "connected" : undefined,
-              content: (
+              )}
+              {active === "connection" && (
                 <DashboardSection
                   id="connection"
                   title="Homebox connection"
@@ -536,14 +504,8 @@ function App() {
                     running={running}
                   />
                 </DashboardSection>
-              ),
-            },
-            {
-              value: "import",
-              label: "7. Import",
-              icon: <Boxes className="h-4 w-4" />,
-              badge: running ? `${progress}%` : done ? "done" : undefined,
-              content: (
+              )}
+              {active === "import" && (
                 <DashboardSection
                   id="import"
                   title="Run import"
@@ -563,26 +525,31 @@ function App() {
                     onRun={runImport}
                   />
                 </DashboardSection>
-              ),
-            },
-            {
-              value: "diagnostics",
-              label: "Diagnostics",
-              icon: <Settings2 className="h-4 w-4" />,
-              badge: diagnostics.length > 0 ? String(diagnostics.length) : undefined,
-              content: (
+              )}
+              {active === "diagnostics" && (
                 <DashboardSection
                   id="diagnostics"
                   title="Diagnostics"
                   icon={<Settings2 className="h-4 w-4" />}
                   badge={diagnostics.length > 0 ? String(diagnostics.length) : undefined}
                   defaultOpen
+                  persistOpen={false}
                   className="md:col-span-2"
                 >
                   <DiagnosticsPanel entries={diagnostics} onClear={() => setDiagnostics([])} client={client} />
                 </DashboardSection>
-              ),
-            },
+              )}
+            </>
+          )}
+          tabs={[
+            { value: "upload", label: "1. Upload", icon: <FileText className="h-4 w-4" /> },
+            { value: "review", label: "2. Review", icon: <Package className="h-4 w-4" />, badge: totes.length > 0 ? `${selectedIds.size}/${totes.length}` : undefined },
+            { value: "mapping", label: "3. Mapping", icon: <Settings2 className="h-4 w-4" /> },
+            { value: "locations", label: "4. Locations", icon: <MapPin className="h-4 w-4" />, badge: distinctLocations.length > 0 ? String(distinctLocations.length) : undefined },
+            { value: "tags", label: "5. Tags", icon: <TagIcon className="h-4 w-4" />, badge: distinctTags.length > 0 ? String(distinctTags.length) : undefined },
+            { value: "connection", label: "6. Connection", icon: <Send className="h-4 w-4" />, badge: client ? "connected" : undefined },
+            { value: "import", label: "7. Import", icon: <Boxes className="h-4 w-4" />, badge: running ? `${progress}%` : done ? "done" : undefined },
+            { value: "diagnostics", label: "Diagnostics", icon: <Settings2 className="h-4 w-4" />, badge: diagnostics.length > 0 ? String(diagnostics.length) : undefined },
           ]}
         />
       </main>
