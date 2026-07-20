@@ -382,7 +382,7 @@ function App() {
         parentToteId: tote.parentToteId,
         dateUpdated: tote.dateUpdated,
       };
-      const rawLocName = renderTemplate(mapping.locationName, toteVars).trim() || tote.title || tote.toteId;
+      const rawLocName = pickLocationName(tote, locationSources, locationConflictRules, mapping);
       const locDesc = renderTemplate(mapping.locationDescription, toteVars);
 
       // Apply user-defined location rules (skip / remap).
