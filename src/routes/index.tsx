@@ -71,6 +71,22 @@ function App() {
     try { localStorage.setItem("dash.tagRules", JSON.stringify(tagRules)); } catch { /* ignore */ }
   }, [tagRules]);
 
+  // Which Totescan fields feed the Tags tab. Applied (active) vs. draft
+  // controlled by checkboxes; user clicks Refresh to promote draft → active
+  // so partially-configured rows aren't disrupted mid-edit.
+  const DEFAULT_TAG_SOURCES: TagSources = { title: true, location: true, profile: true };
+  const [tagSources, setTagSources] = useState<TagSources>(() => {
+    try {
+      const raw = localStorage.getItem("dash.tagSources");
+      if (raw) return { ...DEFAULT_TAG_SOURCES, ...JSON.parse(raw) };
+    } catch { /* ignore */ }
+    return DEFAULT_TAG_SOURCES;
+  });
+  const [tagSourcesDraft, setTagSourcesDraft] = useState<TagSources>(tagSources);
+  useEffect(() => {
+    try { localStorage.setItem("dash.tagSources", JSON.stringify(tagSources)); } catch { /* ignore */ }
+  }, [tagSources]);
+
   // Location rules: keyed by the rendered location name for each tote.
   // `import` true = create/use as-is.
   // `import` false + `remapTo` set = send items to the named location instead.
