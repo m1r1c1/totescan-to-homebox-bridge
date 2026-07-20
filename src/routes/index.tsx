@@ -265,9 +265,19 @@ function App() {
         const qtyNum = qtyStr ? parseInt(qtyStr, 10) : item.quantity;
         const quantity = Number.isFinite(qtyNum) && qtyNum > 0 ? qtyNum : item.quantity;
         const assetId = mapping.itemAssetId ? renderTemplate(mapping.itemAssetId, itemVars).trim() : undefined;
-        const tagNames = mapping.itemTags
+        const rawTagNames = mapping.itemTags
           ? renderTemplate(mapping.itemTags, itemVars).split(",").map((s) => s.trim()).filter(Boolean)
           : [];
+        // Apply user-defined tag rules (skip / remap).
+        const resolvedTagNames: string[] = [];
+        for (const raw of rawTagNames) {
+          const rule = tagRules[raw];
+          if (!rule || rule.import) { resolvedTagNames.push(raw); continue; }
+          const target = rule.remapTo.trim();
+          if (target) resolvedTagNames.push(target);
+          // else: dropped entirely
+        }
+        const tagNames = Array.from(new Set(resolvedTagNames));
 
         // Build custom fields: user-defined + always-on import_ref.
         const customFields: HomeboxCustomField[] = [];
