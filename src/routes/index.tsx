@@ -249,8 +249,23 @@ function App() {
         parentToteId: tote.parentToteId,
         dateUpdated: tote.dateUpdated,
       };
-      const locName = renderTemplate(mapping.locationName, toteVars).trim() || tote.title || tote.toteId;
+      const rawLocName = renderTemplate(mapping.locationName, toteVars).trim() || tote.title || tote.toteId;
       const locDesc = renderTemplate(mapping.locationDescription, toteVars);
+
+      // Apply user-defined location rules (skip / remap).
+      const locRule = locationRules[rawLocName];
+      let locName = rawLocName;
+      if (locRule && !locRule.import) {
+        const target = locRule.remapTo.trim();
+        if (!target) {
+          log({ level: "info", text: `= Skipped tote "${tote.title || tote.toteId}" (location "${rawLocName}" set to skip, ${tote.items.length} items dropped)` });
+          bumpProgress();
+          for (let i = 0; i < tote.items.length; i++) bumpProgress();
+          continue;
+        }
+        locName = target;
+        log({ level: "info", text: `~ Remapped location "${rawLocName}" → "${locName}"` });
+      }
 
       let locationId: string;
       try {
