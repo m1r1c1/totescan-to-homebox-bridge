@@ -1468,6 +1468,7 @@ function StepTags({
 
   return (
     <div>
+      {sourcesBlock}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="text-xs text-muted-foreground">
           <span className="font-medium text-foreground">{distinctTags.length}</span> distinct ·{" "}
