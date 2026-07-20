@@ -619,9 +619,59 @@ function StepMapping({
           <div className="mt-3 flex items-center justify-between rounded-md border border-border/60 p-3">
             <div>
               <p className="text-sm font-medium">Upload item photos</p>
-              <p className="text-xs text-muted-foreground">Fetches images from Totescan's S3 and attaches to each item.</p>
+              <p className="text-xs text-muted-foreground">Fetches images from Totescan's S3 and attaches to each item. First photo becomes the primary.</p>
             </div>
             <Switch checked={mapping.uploadImages} onCheckedChange={(v) => update("uploadImages", v)} />
+          </div>
+          <div className="mt-3 flex items-center justify-between rounded-md border border-border/60 p-3">
+            <div>
+              <p className="text-sm font-medium">Skip items already imported</p>
+              <p className="text-xs text-muted-foreground">Uses the <code className="font-mono text-[11px]">import_ref</code> custom field (<code className="font-mono text-[11px]">totescan-&#123;toteId&#125;-&#123;itemNumber&#125;</code>) as a checkpoint for safe re-runs.</p>
+            </div>
+            <Switch checked={mapping.skipExistingByImportRef} onCheckedChange={(v) => update("skipExistingByImportRef", v)} />
+          </div>
+
+          <div className="mt-6">
+            <div className="mb-2 flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-semibold">Custom fields</h4>
+                <p className="text-xs text-muted-foreground">Map any Totescan field into a Homebox custom field. Empty values are skipped.</p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => update("customFields", [...mapping.customFields, { name: "", template: "" }])}
+              >
+                <Plus className="mr-1 h-3.5 w-3.5" /> Add field
+              </Button>
+            </div>
+            {mapping.customFields.length === 0 && (
+              <p className="rounded border border-dashed border-border/60 px-3 py-4 text-center text-xs text-muted-foreground">
+                No custom fields configured.
+              </p>
+            )}
+            <div className="space-y-2">
+              {mapping.customFields.map((cf, idx) => (
+                <CustomFieldRow
+                  key={idx}
+                  field={cf}
+                  preview={renderTemplate(cf.template, itemVars)}
+                  onChange={(next) => {
+                    const arr = [...mapping.customFields];
+                    arr[idx] = next;
+                    update("customFields", arr);
+                  }}
+                  onRemove={() => {
+                    const arr = mapping.customFields.filter((_, i) => i !== idx);
+                    update("customFields", arr);
+                  }}
+                />
+              ))}
+            </div>
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              An <code className="font-mono">import_ref</code> field is always written automatically for re-run safety.
+            </p>
           </div>
 
         </section>
@@ -631,6 +681,47 @@ function StepMapping({
     </div>
   );
 }
+
+function CustomFieldRow({
+  field,
+  preview,
+  onChange,
+  onRemove,
+}: {
+  field: CustomFieldMapping;
+  preview: string;
+  onChange: (next: CustomFieldMapping) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="rounded-md border border-border/60 p-3">
+      <div className="flex gap-2">
+        <Input
+          value={field.name}
+          onChange={(e) => onChange({ ...field, name: e.target.value })}
+          placeholder="Field name (e.g. Scan Code)"
+          className="text-sm"
+        />
+        <Input
+          value={field.template}
+          onChange={(e) => onChange({ ...field, template: e.target.value })}
+          placeholder="Template (e.g. {toteId})"
+          className="font-mono text-sm"
+        />
+        <Button type="button" variant="ghost" size="icon" onClick={onRemove} aria-label="Remove field">
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+      {preview && (
+        <div className="mt-1.5 rounded border border-border/50 bg-background px-2 py-1 text-xs text-muted-foreground">
+          <span className="mr-1 text-[10px] uppercase tracking-wider text-primary">preview</span>
+          <span className="whitespace-pre-wrap">{preview}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 function VarChips({ vars }: { vars: string[] }) {
   return (
