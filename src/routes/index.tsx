@@ -12,8 +12,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import { parseTotescanFile, renderTemplate, type ParsedTote } from "@/lib/mhtml";
-import { HomeboxClient, fetchImageAsBlob, type HomeboxLocation, type HomeboxLabel, type DiagnosticEntry } from "@/lib/homebox";
-import { DEFAULT_MAPPING, TOTE_VARIABLES, ITEM_VARIABLES, type MappingConfig } from "@/lib/mapping";
+import { HomeboxClient, fetchImageAsBlob, type HomeboxLocation, type HomeboxLabel, type DiagnosticEntry, type HomeboxCustomField, type ExistingItemIndex } from "@/lib/homebox";
+import { DEFAULT_MAPPING, TOTE_VARIABLES, ITEM_VARIABLES, buildImportRef, type MappingConfig, type CustomFieldMapping } from "@/lib/mapping";
+import { Trash2, Plus } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   head: () => ({
