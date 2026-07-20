@@ -741,8 +741,6 @@ function StepMapping({
 
         </section>
       </div>
-
-      <NavButtons onBack={onBack} onNext={onNext} nextLabel="Connect Homebox" />
     </div>
   );
 }
