@@ -146,7 +146,12 @@ export class HomeboxClient {
     const reqHeaders = redactHeaders({ ...this.authHeaders(), ...headers });
 
     try {
-      const res = await fetch(url, { method, headers: { ...this.authHeaders(), ...headers }, body });
+      const res = await fetch(url, {
+        method,
+        headers: { ...this.authHeaders(), ...headers },
+        body,
+        credentials: "include",
+      });
       const durationMs = Math.round(performance.now() - started);
       let respText = "";
       try {
