@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Upload, Package, CheckCircle2, XCircle, Loader2, Boxes, FileText, Settings2, Send, Image as ImageIcon, ChevronDown, Tag as TagIcon } from "lucide-react";
+import { Upload, Package, CheckCircle2, XCircle, Loader2, Boxes, FileText, Settings2, Send, Image as ImageIcon, ChevronDown, Tag as TagIcon, MapPin } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
