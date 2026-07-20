@@ -173,6 +173,7 @@ function App() {
           locationId = existing.id;
           log({ level: "info", text: `Using existing location "${locName}"` });
         } else {
+          client.setPhase(`import:createLocation "${locName}"`);
           const created = await client.createLocation(locName, locDesc);
           locationId = created.id;
           existingByName.set(locName.toLowerCase(), created);
