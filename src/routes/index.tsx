@@ -420,8 +420,31 @@ function App() {
               ),
             },
             {
+              value: "tags",
+              label: "4. Tags",
+              icon: <TagIcon className="h-4 w-4" />,
+              badge: distinctTags.length > 0 ? String(distinctTags.length) : undefined,
+              content: (
+                <DashboardSection
+                  id="tags"
+                  title="Tag import & remapping"
+                  icon={<TagIcon className="h-4 w-4" />}
+                  badge={distinctTags.length > 0 ? String(distinctTags.length) : undefined}
+                  defaultOpen
+                  className="md:col-span-2"
+                >
+                  <StepTags
+                    distinctTags={distinctTags}
+                    tagRules={tagRules}
+                    setTagRules={setTagRules}
+                    existingLabels={existingLabels}
+                  />
+                </DashboardSection>
+              ),
+            },
+            {
               value: "connection",
-              label: "4. Connection",
+              label: "5. Connection",
               icon: <Send className="h-4 w-4" />,
               badge: client ? "connected" : undefined,
               content: (
@@ -446,7 +469,7 @@ function App() {
             },
             {
               value: "import",
-              label: "5. Import",
+              label: "6. Import",
               icon: <Boxes className="h-4 w-4" />,
               badge: running ? `${progress}%` : done ? "done" : undefined,
               content: (
