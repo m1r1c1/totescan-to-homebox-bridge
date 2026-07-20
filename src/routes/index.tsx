@@ -559,8 +559,10 @@ function App() {
 
 function AppTabs({
   tabs,
+  render,
 }: {
-  tabs: Array<{ value: string; label: string; icon?: ReactNode; badge?: string; content: ReactNode }>;
+  tabs: Array<{ value: string; label: string; icon?: ReactNode; badge?: string }>;
+  render: (props: { active: string }) => ReactNode;
 }) {
   const storageKey = "dash.activeTab";
   const [active, setActive] = useState(tabs[0]?.value ?? "upload");
@@ -611,11 +613,7 @@ function AppTabs({
           );
         })}
       </div>
-      {tabs.map((t) => (
-        <div key={t.value} hidden={t.value !== active} className="grid gap-5 md:grid-cols-2">
-          {t.content}
-        </div>
-      ))}
+      <div className="grid gap-5 md:grid-cols-2">{render({ active })}</div>
     </div>
   );
 }
