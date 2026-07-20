@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { Upload, Package, ArrowRight, ArrowLeft, CheckCircle2, XCircle, Loader2, Boxes, FileText, Settings2, Send, Image as ImageIcon } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Upload, Package, CheckCircle2, XCircle, Loader2, Boxes, FileText, Settings2, Send, Image as ImageIcon, ChevronDown } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,15 +37,12 @@ export const Route = createFileRoute("/")({
   component: App,
 });
 
-type Step = 1 | 2 | 3 | 4;
-
 interface LogEntry {
   level: "info" | "ok" | "error";
   text: string;
 }
 
 function App() {
-  const [step, setStep] = useState<Step>(1);
   const [totes, setTotes] = useState<ParsedTote[]>([]);
   const [embedded, setEmbedded] = useState<EmbeddedPartsMap>(new Map());
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -78,7 +76,6 @@ function App() {
       setTotes(parsed.totes);
       setEmbedded(parsed.embedded);
       setSelectedIds(new Set(parsed.totes.map((t) => t.toteId)));
-      setStep(2);
       const itemCount = parsed.totes.reduce((n, t) => n + t.items.length, 0);
       toast.success(`Parsed ${parsed.totes.length} totes, ${itemCount} items, ${parsed.embedded.size} embedded images.`);
     } catch (e) {
@@ -302,7 +299,7 @@ function App() {
     <div className="min-h-screen bg-background text-foreground">
       <Toaster theme="dark" richColors closeButton />
       <header className="border-b border-border">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
+        <div className="mx-auto flex max-w-[1600px] items-center justify-between px-6 py-5">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
               <Boxes className="h-5 w-5" />
@@ -312,88 +309,167 @@ function App() {
               <p className="text-xs text-muted-foreground">Migrate MHTML exports into your self-hosted inventory</p>
             </div>
           </div>
-          <StepIndicator step={step} />
+          <div className="hidden items-center gap-4 text-xs text-muted-foreground md:flex">
+            <span>{totes.length} totes parsed</span>
+            <span>·</span>
+            <span>{selectedTotes.length} selected · {totalItems} items</span>
+            <span>·</span>
+            <span className={client ? "text-primary" : ""}>{client ? "Connected" : "Not connected"}</span>
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-6 py-10">
-        {step === 1 && <StepUpload onFile={handleFile} />}
-        {step === 2 && (
-          <StepReview
-            totes={totes}
-            selectedIds={selectedIds}
-            setSelectedIds={setSelectedIds}
-            onBack={() => setStep(1)}
-            onNext={() => setStep(3)}
-          />
-        )}
-        {step === 3 && (
-          <StepMapping
-            mapping={mapping}
-            setMapping={setMapping}
-            sampleTote={selectedTotes[0] ?? totes[0]}
-            onBack={() => setStep(2)}
-            onNext={() => setStep(4)}
-          />
-        )}
-        {step === 4 && (
-          <StepImport
-            conn={conn}
-            setConn={setConn}
-            client={client}
-            handleConnect={handleConnect}
-            existingLocations={existingLocations}
-            totalTotes={selectedTotes.length}
-            totalItems={totalItems}
-            logs={logs}
-            diagnostics={diagnostics}
-            homeboxClient={client}
-            onClearDiagnostics={() => setDiagnostics([])}
-            progress={progress}
-            running={running}
-            done={done}
-            onBack={() => setStep(3)}
-            onRun={runImport}
-          />
-        )}
+      <main className="mx-auto max-w-[1600px] px-6 py-8">
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+          <DashboardSection id="upload" title="1. Upload export" icon={<FileText className="h-4 w-4" />} defaultOpen>
+            <StepUpload onFile={handleFile} />
+          </DashboardSection>
+
+          <DashboardSection
+            id="review"
+            title="2. Review totes"
+            icon={<Package className="h-4 w-4" />}
+            badge={totes.length > 0 ? `${selectedIds.size}/${totes.length}` : undefined}
+            defaultOpen
+          >
+            {totes.length === 0 ? (
+              <EmptyHint text="Upload a Totescan export to see totes here." />
+            ) : (
+              <StepReview totes={totes} selectedIds={selectedIds} setSelectedIds={setSelectedIds} />
+            )}
+          </DashboardSection>
+
+          <DashboardSection
+            id="mapping"
+            title="3. Field mapping"
+            icon={<Settings2 className="h-4 w-4" />}
+            defaultOpen
+            className="xl:col-span-2"
+          >
+            <StepMapping mapping={mapping} setMapping={setMapping} sampleTote={selectedTotes[0] ?? totes[0]} />
+          </DashboardSection>
+
+          <DashboardSection
+            id="connection"
+            title="4. Homebox connection"
+            icon={<Send className="h-4 w-4" />}
+            badge={client ? "connected" : undefined}
+            defaultOpen
+          >
+            <ConnectionCard
+              conn={conn}
+              setConn={setConn}
+              client={client}
+              handleConnect={handleConnect}
+              existingLocations={existingLocations}
+              running={running}
+            />
+          </DashboardSection>
+
+          <DashboardSection
+            id="import"
+            title="5. Run import"
+            icon={<Boxes className="h-4 w-4" />}
+            badge={running ? `${progress}%` : done ? "done" : undefined}
+            defaultOpen
+          >
+            <ImportRunner
+              client={client}
+              totalTotes={selectedTotes.length}
+              totalItems={totalItems}
+              logs={logs}
+              progress={progress}
+              running={running}
+              done={done}
+              onRun={runImport}
+            />
+          </DashboardSection>
+
+          <DashboardSection
+            id="diagnostics"
+            title="Diagnostics"
+            icon={<Settings2 className="h-4 w-4" />}
+            badge={diagnostics.length > 0 ? String(diagnostics.length) : undefined}
+            defaultOpen={false}
+            className="xl:col-span-3"
+          >
+            <DiagnosticsPanel entries={diagnostics} onClear={() => setDiagnostics([])} client={client} />
+          </DashboardSection>
+        </div>
       </main>
     </div>
   );
 }
 
-function StepIndicator({ step }: { step: Step }) {
-  const items = [
-    { n: 1, label: "Upload" },
-    { n: 2, label: "Review" },
-    { n: 3, label: "Mapping" },
-    { n: 4, label: "Import" },
-  ];
+function EmptyHint({ text }: { text: string }) {
   return (
-    <ol className="hidden items-center gap-2 md:flex">
-      {items.map((it, i) => {
-        const active = step === it.n;
-        const complete = step > it.n;
-        return (
-          <li key={it.n} className="flex items-center gap-2">
-            <div
-              className={`flex h-7 w-7 items-center justify-center rounded-full border text-xs font-medium ${
-                active
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : complete
-                    ? "border-primary/60 bg-primary/20 text-primary"
-                    : "border-border bg-secondary text-muted-foreground"
-              }`}
-            >
-              {complete ? <CheckCircle2 className="h-4 w-4" /> : it.n}
-            </div>
-            <span className={`text-sm ${active ? "text-foreground" : "text-muted-foreground"}`}>{it.label}</span>
-            {i < items.length - 1 && <div className="mx-1 h-px w-6 bg-border" />}
-          </li>
-        );
-      })}
-    </ol>
+    <p className="rounded border border-dashed border-border/60 px-3 py-6 text-center text-xs text-muted-foreground">
+      {text}
+    </p>
   );
 }
+
+function DashboardSection({
+  id,
+  title,
+  icon,
+  badge,
+  defaultOpen = true,
+  className,
+  children,
+}: {
+  id: string;
+  title: string;
+  icon?: ReactNode;
+  badge?: string;
+  defaultOpen?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  const storageKey = `dash.section.${id}.open`;
+  const [open, setOpen] = useState(defaultOpen);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw !== null) setOpen(raw === "1");
+    } catch {
+      // ignore
+    }
+    setHydrated(true);
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      localStorage.setItem(storageKey, open ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }, [open, hydrated, storageKey]);
+
+  return (
+    <section className={`rounded-lg border border-border bg-card ${className ?? ""}`}>
+      <Collapsible open={open} onOpenChange={setOpen}>
+        <CollapsibleTrigger className="flex w-full items-center gap-3 rounded-t-lg px-5 py-3 text-left hover:bg-muted/30">
+          {icon && <span className="text-primary">{icon}</span>}
+          <h2 className="flex-1 text-sm font-semibold tracking-tight">{title}</h2>
+          {badge && (
+            <Badge variant="secondary" className="font-mono text-[10px]">
+              {badge}
+            </Badge>
+          )}
+          <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="border-t border-border/60 px-5 py-4">{children}</div>
+        </CollapsibleContent>
+      </Collapsible>
+    </section>
+  );
+}
+
 
 function StepUpload({ onFile }: { onFile: (f: File) => void }) {
   const [dragging, setDragging] = useState(false);
@@ -448,14 +524,10 @@ function StepReview({
   totes,
   selectedIds,
   setSelectedIds,
-  onBack,
-  onNext,
 }: {
   totes: ParsedTote[];
   selectedIds: Set<string>;
   setSelectedIds: (s: Set<string>) => void;
-  onBack: () => void;
-  onNext: () => void;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const toggle = (id: string) => {
@@ -537,8 +609,6 @@ function StepReview({
           );
         })}
       </div>
-
-      <NavButtons onBack={onBack} onNext={onNext} nextDisabled={selectedIds.size === 0} nextLabel="Configure mapping" />
     </div>
   );
 }
@@ -547,14 +617,10 @@ function StepMapping({
   mapping,
   setMapping,
   sampleTote,
-  onBack,
-  onNext,
 }: {
   mapping: MappingConfig;
   setMapping: (m: MappingConfig) => void;
   sampleTote: ParsedTote | undefined;
-  onBack: () => void;
-  onNext: () => void;
 }) {
   const sampleItem = sampleTote?.items[0];
   const toteVars: Record<string, string | number> = sampleTote
@@ -575,15 +641,10 @@ function StepMapping({
 
   return (
     <div>
-      <div className="mb-6 flex items-center gap-3">
-        <Settings2 className="h-6 w-6 text-primary" />
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Field mapping</h2>
-          <p className="text-sm text-muted-foreground">
-            Templates use <code className="rounded bg-muted px-1 text-xs">{"{variable}"}</code> placeholders. Preview updates live.
-          </p>
-        </div>
-      </div>
+      <p className="mb-4 text-xs text-muted-foreground">
+        Templates use <code className="rounded bg-muted px-1 text-xs">{"{variable}"}</code> placeholders. Preview updates live.
+      </p>
+
 
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="rounded-lg border border-border bg-card p-5">
@@ -680,8 +741,6 @@ function StepMapping({
 
         </section>
       </div>
-
-      <NavButtons onBack={onBack} onNext={onNext} nextLabel="Connect Homebox" />
     </div>
   );
 }
@@ -772,127 +831,113 @@ function MappingField({
   );
 }
 
-function StepImport({
+function ConnectionCard({
   conn,
   setConn,
   client,
   handleConnect,
   existingLocations,
-  totalTotes,
-  totalItems,
-  logs,
-  diagnostics,
-  homeboxClient,
-  onClearDiagnostics,
-  progress,
   running,
-  done,
-  onBack,
-  onRun,
 }: {
   conn: { baseUrl: string; username: string; password: string; token: string };
   setConn: (c: { baseUrl: string; username: string; password: string; token: string }) => void;
   client: HomeboxClient | null;
   handleConnect: () => void;
   existingLocations: HomeboxLocation[];
-  totalTotes: number;
-  totalItems: number;
-  logs: LogEntry[];
-  diagnostics: DiagnosticEntry[];
-  homeboxClient: HomeboxClient | null;
-  onClearDiagnostics: () => void;
-  progress: number;
   running: boolean;
-  done: boolean;
-  onBack: () => void;
-  onRun: () => void;
 }) {
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-      <section className="rounded-lg border border-border bg-card p-5">
-        <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold">
-          <Send className="h-5 w-5 text-primary" /> Homebox connection
-        </h2>
-        <div className="space-y-3">
-          <div>
-            <Label className="mb-1.5 block text-xs uppercase tracking-wide text-muted-foreground">Homebox URL</Label>
-            <Input placeholder="https://homebox.local" value={conn.baseUrl} onChange={(e) => setConn({ ...conn, baseUrl: e.target.value })} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="mb-1.5 block text-xs uppercase tracking-wide text-muted-foreground">Username</Label>
-              <Input value={conn.username} onChange={(e) => setConn({ ...conn, username: e.target.value })} />
-            </div>
-            <div>
-              <Label className="mb-1.5 block text-xs uppercase tracking-wide text-muted-foreground">Password</Label>
-              <Input type="password" value={conn.password} onChange={(e) => setConn({ ...conn, password: e.target.value })} />
-            </div>
-          </div>
-          <Button className="w-full" onClick={handleConnect} disabled={running}>
-            {client ? "Reconnect" : "Connect"}
-          </Button>
-          {client && (
-            <div className="rounded-md border border-primary/40 bg-primary/10 p-3 text-xs">
-              <p className="font-medium text-primary">Connected</p>
-              <p className="mt-0.5 text-muted-foreground">
-                {existingLocations.length} existing locations on server.
-              </p>
-            </div>
-          )}
+    <div className="space-y-3">
+      <div>
+        <Label className="mb-1.5 block text-xs uppercase tracking-wide text-muted-foreground">Homebox URL</Label>
+        <Input placeholder="https://homebox.local" value={conn.baseUrl} onChange={(e) => setConn({ ...conn, baseUrl: e.target.value })} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <Label className="mb-1.5 block text-xs uppercase tracking-wide text-muted-foreground">Username</Label>
+          <Input value={conn.username} onChange={(e) => setConn({ ...conn, username: e.target.value })} />
         </div>
-
-        <div className="mt-6 rounded-md border border-border/60 bg-background/60 p-3 text-sm">
-          <p className="mb-2 font-medium">Ready to import</p>
-          <ul className="space-y-1 text-muted-foreground">
-            <li>{totalTotes} totes → locations</li>
-            <li>{totalItems} items</li>
-          </ul>
+        <div>
+          <Label className="mb-1.5 block text-xs uppercase tracking-wide text-muted-foreground">Password</Label>
+          <Input type="password" value={conn.password} onChange={(e) => setConn({ ...conn, password: e.target.value })} />
         </div>
-
-        <Button className="mt-4 w-full" size="lg" onClick={onRun} disabled={!client || running || totalItems === 0}>
-          {running ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Importing…</> : done ? "Run again" : "Start import"}
-        </Button>
-
-        <p className="mt-4 text-[11px] leading-relaxed text-muted-foreground">
-          Note: this app calls the Homebox API directly from your browser. If you see CORS errors, make sure your Homebox instance allows requests from this app's origin (or run both on the same host).
-        </p>
-      </section>
-
-      <section className="space-y-6">
-        <div className="rounded-lg border border-border bg-card p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-xl font-semibold">Progress</h2>
-            <span className="text-sm text-muted-foreground">{progress}%</span>
-          </div>
-          <Progress value={progress} className="mb-4" />
-          <ScrollArea className="h-[280px] rounded border border-border/60 bg-background/60 p-3 font-mono text-xs">
-            {logs.length === 0 ? (
-              <p className="text-muted-foreground">Logs will appear here once the import starts.</p>
-            ) : (
-              <ul className="space-y-1">
-                {logs.map((l, i) => (
-                  <li key={i} className="flex gap-2">
-                    {l.level === "ok" && <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />}
-                    {l.level === "error" && <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />}
-                    {l.level === "info" && <div className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
-                    <span className={l.level === "error" ? "text-destructive" : "text-foreground/90"}>{l.text}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </ScrollArea>
-          <div className="mt-4 flex">
-            <Button variant="outline" onClick={onBack} disabled={running}>
-              <ArrowLeft className="mr-2 h-4 w-4" /> Back
-            </Button>
-          </div>
+      </div>
+      <Button className="w-full" onClick={handleConnect} disabled={running}>
+        {client ? "Reconnect" : "Connect"}
+      </Button>
+      {client && (
+        <div className="rounded-md border border-primary/40 bg-primary/10 p-3 text-xs">
+          <p className="font-medium text-primary">Connected</p>
+          <p className="mt-0.5 text-muted-foreground">
+            {existingLocations.length} existing locations on server.
+          </p>
         </div>
-
-        <DiagnosticsPanel entries={diagnostics} onClear={onClearDiagnostics} client={homeboxClient} />
-      </section>
+      )}
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        This app calls the Homebox API directly from your browser. If you see CORS errors, make sure your Homebox instance allows requests from this app's origin.
+      </p>
     </div>
   );
 }
+
+function ImportRunner({
+  client,
+  totalTotes,
+  totalItems,
+  logs,
+  progress,
+  running,
+  done,
+  onRun,
+}: {
+  client: HomeboxClient | null;
+  totalTotes: number;
+  totalItems: number;
+  logs: LogEntry[];
+  progress: number;
+  running: boolean;
+  done: boolean;
+  onRun: () => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="rounded-md border border-border/60 bg-background/60 p-3 text-sm">
+        <p className="mb-2 font-medium">Ready to import</p>
+        <ul className="space-y-1 text-muted-foreground">
+          <li>{totalTotes} totes → locations</li>
+          <li>{totalItems} items</li>
+        </ul>
+      </div>
+      <Button className="w-full" size="lg" onClick={onRun} disabled={!client || running || totalItems === 0}>
+        {running ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Importing…</> : done ? "Run again" : "Start import"}
+      </Button>
+      <div>
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Progress</span>
+          <span className="text-xs text-muted-foreground">{progress}%</span>
+        </div>
+        <Progress value={progress} className="mb-3" />
+        <ScrollArea className="h-[280px] rounded border border-border/60 bg-background/60 p-3 font-mono text-xs">
+          {logs.length === 0 ? (
+            <p className="text-muted-foreground">Logs will appear here once the import starts.</p>
+          ) : (
+            <ul className="space-y-1">
+              {logs.map((l, i) => (
+                <li key={i} className="flex gap-2">
+                  {l.level === "ok" && <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />}
+                  {l.level === "error" && <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />}
+                  {l.level === "info" && <div className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+                  <span className={l.level === "error" ? "text-destructive" : "text-foreground/90"}>{l.text}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </ScrollArea>
+      </div>
+    </div>
+  );
+}
+
 
 function DiagnosticsPanel({ entries, onClear, client }: { entries: DiagnosticEntry[]; onClear: () => void; client: HomeboxClient | null }) {
   const [openId, setOpenId] = useState<number | null>(null);
@@ -1038,10 +1083,11 @@ function DiagnosticsPanel({ entries, onClear, client }: { entries: DiagnosticEnt
                     <span
                       className={`inline-flex h-5 min-w-[42px] items-center justify-center rounded px-1.5 font-mono text-[10px] font-semibold ${
                         e.ok
-                          ? "bg-primary/15 text-primary"
+                          ? "bg-success/15 text-success"
                           : "bg-destructive/15 text-destructive"
                       }`}
                     >
+
                       {e.status ?? "ERR"}
                     </span>
                     <span className="font-mono text-[11px] font-semibold uppercase text-muted-foreground">{e.method}</span>
@@ -1094,19 +1140,6 @@ function DiagBlock({ label, body, tone }: { label: string; body: string; tone?: 
       >
         {body}
       </pre>
-    </div>
-  );
-}
-
-function NavButtons({ onBack, onNext, nextLabel, nextDisabled }: { onBack: () => void; onNext: () => void; nextLabel: string; nextDisabled?: boolean }) {
-  return (
-    <div className="mt-8 flex items-center justify-between">
-      <Button variant="outline" onClick={onBack}>
-        <ArrowLeft className="mr-2 h-4 w-4" /> Back
-      </Button>
-      <Button onClick={onNext} disabled={nextDisabled}>
-        {nextLabel} <ArrowRight className="ml-2 h-4 w-4" />
-      </Button>
     </div>
   );
 }
