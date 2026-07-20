@@ -344,6 +344,7 @@ function App() {
             totalItems={totalItems}
             logs={logs}
             diagnostics={diagnostics}
+            homeboxClient={client}
             onClearDiagnostics={() => setDiagnostics([])}
             progress={progress}
             running={running}
