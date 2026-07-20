@@ -468,8 +468,31 @@ function App() {
               ),
             },
             {
+              value: "locations",
+              label: "4. Locations",
+              icon: <MapPin className="h-4 w-4" />,
+              badge: distinctLocations.length > 0 ? String(distinctLocations.length) : undefined,
+              content: (
+                <DashboardSection
+                  id="locations"
+                  title="Location import & remapping"
+                  icon={<MapPin className="h-4 w-4" />}
+                  badge={distinctLocations.length > 0 ? String(distinctLocations.length) : undefined}
+                  defaultOpen
+                  className="md:col-span-2"
+                >
+                  <StepLocations
+                    distinctLocations={distinctLocations}
+                    locationRules={locationRules}
+                    setLocationRules={setLocationRules}
+                    existingLocations={existingLocations}
+                  />
+                </DashboardSection>
+              ),
+            },
+            {
               value: "tags",
-              label: "4. Tags",
+              label: "5. Tags",
               icon: <TagIcon className="h-4 w-4" />,
               badge: distinctTags.length > 0 ? String(distinctTags.length) : undefined,
               content: (
