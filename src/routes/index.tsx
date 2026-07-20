@@ -133,6 +133,18 @@ function App() {
     const existingByName = new Map(existingLocations.map((l) => [l.name.toLowerCase(), l]));
     const labelsByName = new Map(existingLabels.map((l) => [l.name.toLowerCase(), l]));
 
+    // Pre-flight: build import_ref → existing item index for idempotent re-runs.
+    let existingByRef = new Map<string, ExistingItemIndex>();
+    if (mapping.skipExistingByImportRef) {
+      try {
+        client.setPhase("import:indexExisting");
+        existingByRef = await client.indexItemsByImportRef();
+        log({ level: "info", text: `Indexed ${existingByRef.size} existing items by import_ref.` });
+      } catch (e) {
+        log({ level: "error", text: `Failed to index existing items: ${(e as Error).message}` });
+      }
+    }
+
     async function resolveLabelIds(names: string[]): Promise<string[]> {
       const ids: string[] = [];
       for (const raw of names) {
@@ -189,8 +201,25 @@ function App() {
       bumpProgress();
 
       for (const item of tote.items) {
-        const itemVars = { ...toteVars, name: item.name, itemNumber: item.itemNumber, quantity: item.quantity, description: item.description, upc: item.upc };
+        const importRef = buildImportRef(tote.toteId, item.itemNumber);
+        const itemVars = {
+          ...toteVars,
+          name: item.name,
+          itemNumber: item.itemNumber,
+          quantity: item.quantity,
+          description: item.description,
+          upc: item.upc,
+          created: item.created,
+          updated: item.updated,
+        };
         const itemName = renderTemplate(mapping.itemName, itemVars).trim() || item.name;
+
+        if (mapping.skipExistingByImportRef && existingByRef.has(importRef)) {
+          log({ level: "info", text: `  = Skipped "${itemName}" (import_ref ${importRef} already imported)` });
+          bumpProgress();
+          continue;
+        }
+
         const itemDesc = renderTemplate(mapping.itemDescription, itemVars);
         const itemNotes = mapping.itemNotes ? renderTemplate(mapping.itemNotes, itemVars) : "";
         const qtyStr = mapping.itemQuantity ? renderTemplate(mapping.itemQuantity, itemVars).trim() : "";
@@ -200,6 +229,18 @@ function App() {
         const tagNames = mapping.itemTags
           ? renderTemplate(mapping.itemTags, itemVars).split(",").map((s) => s.trim()).filter(Boolean)
           : [];
+
+        // Build custom fields: user-defined + always-on import_ref.
+        const customFields: HomeboxCustomField[] = [];
+        for (const cf of mapping.customFields) {
+          const name = cf.name.trim();
+          if (!name) continue;
+          const value = renderTemplate(cf.template, itemVars).trim();
+          if (!value) continue;
+          customFields.push({ name, type: "text", textValue: value });
+        }
+        customFields.push({ name: "import_ref", type: "text", textValue: importRef });
+
         try {
           const labelIds = tagNames.length > 0 ? await resolveLabelIds(tagNames) : [];
           client.setPhase(`import:createItem "${itemName}"`);
@@ -210,28 +251,31 @@ function App() {
             quantity,
             assetId: assetId || undefined,
             labelIds: labelIds.length > 0 ? labelIds : undefined,
+            fields: customFields,
           });
-          if (itemNotes || labelIds.length > 0 || quantity !== 1) {
+          existingByRef.set(importRef, { id: created.id, name: created.name, importRef });
+          if (itemNotes) {
             try {
               client.setPhase(`import:updateItem "${itemName}"`);
               await client.updateItem(created.id, {
-                notes: itemNotes || undefined,
-                quantity,
-                labelIds: labelIds.length > 0 ? labelIds : undefined,
+                notes: itemNotes,
               });
             } catch (e) {
-              log({ level: "error", text: `  ! Item "${itemName}" details update failed: ${(e as Error).message}` });
+              log({ level: "error", text: `  ! Item "${itemName}" notes update failed: ${(e as Error).message}` });
             }
           }
           log({ level: "ok", text: `  + Item "${itemName}"${labelIds.length ? ` [${tagNames.join(", ")}]` : ""}` });
           if (mapping.uploadImages && item.imageUrls.length > 0) {
+            let primaryAssigned = false;
             for (const url of item.imageUrls) {
               try {
                 const blob = await fetchImageAsBlob(url);
                 const filename = url.split("/").pop()?.split("?")[0] ?? "photo.jpg";
+                const isPrimary = !primaryAssigned;
                 client.setPhase(`import:uploadAttachment "${filename}"`);
-                await client.uploadAttachment(created.id, blob, filename);
-                log({ level: "ok", text: `      photo ${filename}` });
+                await client.uploadAttachment(created.id, blob, filename, "photo", isPrimary);
+                primaryAssigned = true;
+                log({ level: "ok", text: `      photo ${filename}${isPrimary ? " (primary)" : ""}` });
               } catch (e) {
                 log({ level: "error", text: `      photo failed (${url}): ${(e as Error).message}` });
               }
