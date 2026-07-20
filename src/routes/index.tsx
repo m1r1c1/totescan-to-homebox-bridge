@@ -617,14 +617,10 @@ function StepMapping({
   mapping,
   setMapping,
   sampleTote,
-  onBack,
-  onNext,
 }: {
   mapping: MappingConfig;
   setMapping: (m: MappingConfig) => void;
   sampleTote: ParsedTote | undefined;
-  onBack: () => void;
-  onNext: () => void;
 }) {
   const sampleItem = sampleTote?.items[0];
   const toteVars: Record<string, string | number> = sampleTote
@@ -645,15 +641,10 @@ function StepMapping({
 
   return (
     <div>
-      <div className="mb-6 flex items-center gap-3">
-        <Settings2 className="h-6 w-6 text-primary" />
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Field mapping</h2>
-          <p className="text-sm text-muted-foreground">
-            Templates use <code className="rounded bg-muted px-1 text-xs">{"{variable}"}</code> placeholders. Preview updates live.
-          </p>
-        </div>
-      </div>
+      <p className="mb-4 text-xs text-muted-foreground">
+        Templates use <code className="rounded bg-muted px-1 text-xs">{"{variable}"}</code> placeholders. Preview updates live.
+      </p>
+
 
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="rounded-lg border border-border bg-card p-5">
