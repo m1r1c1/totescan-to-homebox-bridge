@@ -12,7 +12,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import { parseTotescanFile, renderTemplate, type ParsedTote } from "@/lib/mhtml";
-import { HomeboxClient, fetchImageAsBlob, type HomeboxLocation, type HomeboxLabel } from "@/lib/homebox";
+import { HomeboxClient, fetchImageAsBlob, type HomeboxLocation, type HomeboxLabel, type DiagnosticEntry } from "@/lib/homebox";
 import { DEFAULT_MAPPING, TOTE_VARIABLES, ITEM_VARIABLES, type MappingConfig } from "@/lib/mapping";
 
 export const Route = createFileRoute("/")({
@@ -52,6 +52,7 @@ function App() {
   const [existingLocations, setExistingLocations] = useState<HomeboxLocation[]>([]);
   const [existingLabels, setExistingLabels] = useState<HomeboxLabel[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticEntry[]>([]);
   const [progress, setProgress] = useState(0);
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
@@ -84,14 +85,22 @@ function App() {
   async function handleConnect() {
     if (!conn.baseUrl) return toast.error("Homebox URL is required.");
     const c = new HomeboxClient(conn.baseUrl);
+    c.onDiagnostic = (entry) => setDiagnostics((prev) => [...prev, entry]);
+    setDiagnostics([]);
     try {
+      c.setPhase("connect:login");
       if (conn.token) {
         c.token = conn.token;
       } else {
         await c.login(conn.username, conn.password);
       }
+      c.setPhase("connect:entity-types");
       await c.ensureEntityTypes();
-      const [locs, labels] = await Promise.all([c.listLocations(), c.listLabels().catch(() => [])]);
+      c.setPhase("connect:list-locations");
+      const locs = await c.listLocations();
+      c.setPhase("connect:list-tags");
+      const labels = await c.listLabels().catch(() => [] as HomeboxLabel[]);
+      c.setPhase("idle");
       setClient(c);
       setExistingLocations(locs);
       setExistingLabels(labels);
@@ -110,6 +119,7 @@ function App() {
     setRunning(true);
     setDone(false);
     setLogs([]);
+    setDiagnostics([]);
     setProgress(0);
 
     const totalSteps = selectedTotes.length + totalItems;
@@ -131,6 +141,7 @@ function App() {
         let label = labelsByName.get(key);
         if (!label && mapping.createMissingTags) {
           try {
+            client!.setPhase(`import:createTag "${name}"`);
             label = await client!.createLabel(name);
             labelsByName.set(key, label);
             log({ level: "ok", text: `  ~ Created tag "${name}"` });
@@ -163,6 +174,7 @@ function App() {
           locationId = existing.id;
           log({ level: "info", text: `Using existing location "${locName}"` });
         } else {
+          client.setPhase(`import:createLocation "${locName}"`);
           const created = await client.createLocation(locName, locDesc);
           locationId = created.id;
           existingByName.set(locName.toLowerCase(), created);
@@ -189,6 +201,7 @@ function App() {
           : [];
         try {
           const labelIds = tagNames.length > 0 ? await resolveLabelIds(tagNames) : [];
+          client.setPhase(`import:createItem "${itemName}"`);
           const created = await client.createItem({
             name: itemName,
             description: itemDesc,
@@ -199,6 +212,7 @@ function App() {
           });
           if (itemNotes || labelIds.length > 0 || quantity !== 1) {
             try {
+              client.setPhase(`import:updateItem "${itemName}"`);
               await client.updateItem(created.id, {
                 notes: itemNotes || undefined,
                 quantity,
@@ -214,6 +228,7 @@ function App() {
               try {
                 const blob = await fetchImageAsBlob(url);
                 const filename = url.split("/").pop()?.split("?")[0] ?? "photo.jpg";
+                client.setPhase(`import:uploadAttachment "${filename}"`);
                 await client.uploadAttachment(created.id, blob, filename);
                 log({ level: "ok", text: `      photo ${filename}` });
               } catch (e) {
@@ -283,6 +298,8 @@ function App() {
             totalTotes={selectedTotes.length}
             totalItems={totalItems}
             logs={logs}
+            diagnostics={diagnostics}
+            onClearDiagnostics={() => setDiagnostics([])}
             progress={progress}
             running={running}
             done={done}
@@ -624,6 +641,8 @@ function StepImport({
   totalTotes,
   totalItems,
   logs,
+  diagnostics,
+  onClearDiagnostics,
   progress,
   running,
   done,
@@ -638,6 +657,8 @@ function StepImport({
   totalTotes: number;
   totalItems: number;
   logs: LogEntry[];
+  diagnostics: DiagnosticEntry[];
+  onClearDiagnostics: () => void;
   progress: number;
   running: boolean;
   done: boolean;
@@ -695,34 +716,164 @@ function StepImport({
         </p>
       </section>
 
-      <section className="rounded-lg border border-border bg-card p-5">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-xl font-semibold">Progress</h2>
-          <span className="text-sm text-muted-foreground">{progress}%</span>
+      <section className="space-y-6">
+        <div className="rounded-lg border border-border bg-card p-5">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-xl font-semibold">Progress</h2>
+            <span className="text-sm text-muted-foreground">{progress}%</span>
+          </div>
+          <Progress value={progress} className="mb-4" />
+          <ScrollArea className="h-[280px] rounded border border-border/60 bg-background/60 p-3 font-mono text-xs">
+            {logs.length === 0 ? (
+              <p className="text-muted-foreground">Logs will appear here once the import starts.</p>
+            ) : (
+              <ul className="space-y-1">
+                {logs.map((l, i) => (
+                  <li key={i} className="flex gap-2">
+                    {l.level === "ok" && <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />}
+                    {l.level === "error" && <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />}
+                    {l.level === "info" && <div className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+                    <span className={l.level === "error" ? "text-destructive" : "text-foreground/90"}>{l.text}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </ScrollArea>
+          <div className="mt-4 flex">
+            <Button variant="outline" onClick={onBack} disabled={running}>
+              <ArrowLeft className="mr-2 h-4 w-4" /> Back
+            </Button>
+          </div>
         </div>
-        <Progress value={progress} className="mb-4" />
-        <ScrollArea className="h-[420px] rounded border border-border/60 bg-background/60 p-3 font-mono text-xs">
-          {logs.length === 0 ? (
-            <p className="text-muted-foreground">Logs will appear here once the import starts.</p>
-          ) : (
-            <ul className="space-y-1">
-              {logs.map((l, i) => (
-                <li key={i} className="flex gap-2">
-                  {l.level === "ok" && <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />}
-                  {l.level === "error" && <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />}
-                  {l.level === "info" && <div className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
-                  <span className={l.level === "error" ? "text-destructive" : "text-foreground/90"}>{l.text}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </ScrollArea>
-        <div className="mt-4 flex">
-          <Button variant="outline" onClick={onBack} disabled={running}>
-            <ArrowLeft className="mr-2 h-4 w-4" /> Back
+
+        <DiagnosticsPanel entries={diagnostics} onClear={onClearDiagnostics} />
+      </section>
+    </div>
+  );
+}
+
+function DiagnosticsPanel({ entries, onClear }: { entries: DiagnosticEntry[]; onClear: () => void }) {
+  const [openId, setOpenId] = useState<number | null>(null);
+  const [onlyErrors, setOnlyErrors] = useState(false);
+  const filtered = onlyErrors ? entries.filter((e) => !e.ok) : entries;
+  const errCount = entries.filter((e) => !e.ok).length;
+
+  function copyAll() {
+    const text = entries
+      .map(
+        (e) =>
+          `[${e.timestamp}] (${e.phase}) ${e.method} ${e.url} → ${e.status ?? "ERR"} ${e.statusText ?? ""} (${e.durationMs}ms)\n` +
+          `req headers: ${JSON.stringify(e.requestHeaders)}\n` +
+          (e.requestBody ? `req body: ${e.requestBody}\n` : "") +
+          (e.responseHeaders ? `res headers: ${JSON.stringify(e.responseHeaders)}\n` : "") +
+          (e.responseBody ? `res body: ${e.responseBody}\n` : "") +
+          (e.error ? `error: ${e.error}\n` : ""),
+      )
+      .join("\n---\n");
+    navigator.clipboard?.writeText(text).then(
+      () => toast.success("Diagnostics copied to clipboard"),
+      () => toast.error("Copy failed"),
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-5">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-semibold">Diagnostics</h2>
+          <p className="text-xs text-muted-foreground">
+            {entries.length} Homebox request{entries.length === 1 ? "" : "s"}
+            {errCount > 0 && <span className="text-destructive"> · {errCount} failed</span>}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Switch checked={onlyErrors} onCheckedChange={setOnlyErrors} />
+            Errors only
+          </label>
+          <Button variant="outline" size="sm" onClick={copyAll} disabled={entries.length === 0}>
+            Copy
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onClear} disabled={entries.length === 0}>
+            Clear
           </Button>
         </div>
-      </section>
+      </div>
+      <ScrollArea className="h-[360px] rounded border border-border/60 bg-background/60">
+        {filtered.length === 0 ? (
+          <p className="p-3 text-xs text-muted-foreground">
+            No requests yet. Connect to Homebox or start the import to capture request/response details here.
+          </p>
+        ) : (
+          <ul className="divide-y divide-border/60">
+            {filtered.map((e) => {
+              const open = openId === e.id;
+              return (
+                <li key={e.id} className="text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setOpenId(open ? null : e.id)}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/40"
+                  >
+                    <span
+                      className={`inline-flex h-5 min-w-[42px] items-center justify-center rounded px-1.5 font-mono text-[10px] font-semibold ${
+                        e.ok
+                          ? "bg-primary/15 text-primary"
+                          : "bg-destructive/15 text-destructive"
+                      }`}
+                    >
+                      {e.status ?? "ERR"}
+                    </span>
+                    <span className="font-mono text-[11px] font-semibold uppercase text-muted-foreground">{e.method}</span>
+                    <span className="flex-1 truncate font-mono">{e.url.replace(/^https?:\/\/[^/]+/, "")}</span>
+                    <span className="shrink-0 text-muted-foreground">{e.durationMs}ms</span>
+                  </button>
+                  {open && (
+                    <div className="space-y-3 border-t border-border/60 bg-background/80 p-3 font-mono">
+                      <DiagRow label="phase" value={e.phase} />
+                      <DiagRow label="time" value={e.timestamp} />
+                      <DiagRow label="url" value={e.url} />
+                      {e.error && <DiagBlock label="error" body={e.error} tone="error" />}
+                      <DiagBlock label="request headers" body={JSON.stringify(e.requestHeaders, null, 2)} />
+                      {e.requestBody && <DiagBlock label="request body" body={e.requestBody} />}
+                      {e.responseHeaders && (
+                        <DiagBlock label="response headers" body={JSON.stringify(e.responseHeaders, null, 2)} />
+                      )}
+                      {e.responseBody && (
+                        <DiagBlock label="response body" body={e.responseBody} tone={e.ok ? undefined : "error"} />
+                      )}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </ScrollArea>
+    </div>
+  );
+}
+
+function DiagRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex gap-2 text-[11px]">
+      <span className="w-28 shrink-0 uppercase tracking-wider text-muted-foreground">{label}</span>
+      <span className="break-all">{value}</span>
+    </div>
+  );
+}
+
+function DiagBlock({ label, body, tone }: { label: string; body: string; tone?: "error" }) {
+  return (
+    <div>
+      <p className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
+      <pre
+        className={`max-h-56 overflow-auto whitespace-pre-wrap break-all rounded border border-border/60 bg-background p-2 text-[11px] ${
+          tone === "error" ? "text-destructive" : "text-foreground/90"
+        }`}
+      >
+        {body}
+      </pre>
     </div>
   );
 }
