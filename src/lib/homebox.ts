@@ -34,15 +34,57 @@ export interface HomeboxItem {
   name: string;
 }
 
+export interface DiagnosticEntry {
+  id: number;
+  timestamp: string;
+  phase: string;
+  method: string;
+  url: string;
+  status?: number;
+  statusText?: string;
+  ok: boolean;
+  durationMs: number;
+  requestHeaders: Record<string, string>;
+  requestBody?: string;
+  responseHeaders?: Record<string, string>;
+  responseBody?: string;
+  error?: string;
+}
+
+export type DiagnosticListener = (entry: DiagnosticEntry) => void;
+
+const MAX_BODY_CHARS = 4000;
+let diagCounter = 0;
+
+function truncate(s: string): string {
+  if (s.length <= MAX_BODY_CHARS) return s;
+  return s.slice(0, MAX_BODY_CHARS) + `\n… (${s.length - MAX_BODY_CHARS} more chars truncated)`;
+}
+
+function redactHeaders(h: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(h)) {
+    if (/^authorization$/i.test(k)) out[k] = v ? `Bearer •••${v.slice(-6)}` : "";
+    else out[k] = v;
+  }
+  return out;
+}
+
 export class HomeboxClient {
   baseUrl: string;
   token: string | null = null;
   locationTypeId: string | null = null;
   itemTypeId: string | null = null;
+  onDiagnostic: DiagnosticListener | null = null;
+  phase = "idle";
 
   constructor(baseUrl: string, token?: string) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     if (token) this.token = token;
+  }
+
+  setPhase(phase: string) {
+    this.phase = phase;
   }
 
   private authHeaders(extra: Record<string, string> = {}): Record<string, string> {
@@ -51,11 +93,88 @@ export class HomeboxClient {
     return h;
   }
 
+  // Central fetch wrapper — records every request/response for diagnostics.
+  private async request(
+    method: string,
+    path: string,
+    opts: { headers?: Record<string, string>; body?: BodyInit | null; jsonBody?: unknown } = {},
+  ): Promise<Response> {
+    const url = `${this.baseUrl}${path}`;
+    const headers: Record<string, string> = { ...(opts.headers ?? {}) };
+    let body: BodyInit | null | undefined = opts.body;
+    let bodyPreview: string | undefined;
+
+    if (opts.jsonBody !== undefined) {
+      headers["Content-Type"] = "application/json";
+      const json = JSON.stringify(opts.jsonBody);
+      body = json;
+      bodyPreview = json;
+    } else if (typeof body === "string") {
+      bodyPreview = body;
+    } else if (body instanceof FormData) {
+      const parts: string[] = [];
+      body.forEach((v, k) => {
+        if (v instanceof Blob) parts.push(`${k}=<Blob ${v.size}B ${v.type || "?"}>`);
+        else parts.push(`${k}=${String(v)}`);
+      });
+      bodyPreview = `FormData { ${parts.join(", ")} }`;
+    }
+
+    const id = ++diagCounter;
+    const phase = this.phase;
+    const started = performance.now();
+    const timestamp = new Date().toISOString();
+    const reqHeaders = redactHeaders({ ...this.authHeaders(), ...headers });
+
+    try {
+      const res = await fetch(url, { method, headers: { ...this.authHeaders(), ...headers }, body });
+      const durationMs = Math.round(performance.now() - started);
+      let respText = "";
+      try {
+        // Clone so callers can still consume the body downstream.
+        respText = truncate(await res.clone().text());
+      } catch {
+        respText = "<unreadable>";
+      }
+      const respHeaders: Record<string, string> = {};
+      res.headers.forEach((v, k) => (respHeaders[k] = v));
+      this.onDiagnostic?.({
+        id,
+        timestamp,
+        phase,
+        method,
+        url,
+        status: res.status,
+        statusText: res.statusText,
+        ok: res.ok,
+        durationMs,
+        requestHeaders: reqHeaders,
+        requestBody: bodyPreview ? truncate(bodyPreview) : undefined,
+        responseHeaders: respHeaders,
+        responseBody: respText,
+      });
+      return res;
+    } catch (e) {
+      const durationMs = Math.round(performance.now() - started);
+      this.onDiagnostic?.({
+        id,
+        timestamp,
+        phase,
+        method,
+        url,
+        ok: false,
+        durationMs,
+        requestHeaders: reqHeaders,
+        requestBody: bodyPreview ? truncate(bodyPreview) : undefined,
+        error: (e as Error).message,
+      });
+      throw e;
+    }
+  }
+
   async login(username: string, password: string): Promise<HomeboxLoginResponse> {
-    const r = await fetch(`${this.baseUrl}/api/v1/users/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password, stayLoggedIn: true }),
+    const r = await this.request("POST", `/api/v1/users/login`, {
+      jsonBody: { username, password, stayLoggedIn: true },
     });
     if (!r.ok) throw new Error(`Homebox login failed: ${r.status} ${await safeText(r)}`);
     const data = (await r.json()) as HomeboxLoginResponse;
@@ -63,9 +182,8 @@ export class HomeboxClient {
     return data;
   }
 
-  // Discover / create the entity types used for locations and items.
   async ensureEntityTypes(): Promise<{ locationTypeId: string; itemTypeId: string }> {
-    const r = await fetch(`${this.baseUrl}/api/v1/entity-types`, { headers: this.authHeaders() });
+    const r = await this.request("GET", `/api/v1/entity-types`);
     if (!r.ok) throw new Error(`List entity types failed: ${r.status} ${await safeText(r)}`);
     const types = (await r.json()) as HomeboxEntityType[];
     let loc = types.find((t) => t.isLocation);
@@ -78,10 +196,8 @@ export class HomeboxClient {
   }
 
   async createEntityType(name: string, isLocation: boolean): Promise<HomeboxEntityType> {
-    const r = await fetch(`${this.baseUrl}/api/v1/entity-types`, {
-      method: "POST",
-      headers: this.authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ name, isLocation, icon: "" }),
+    const r = await this.request("POST", `/api/v1/entity-types`, {
+      jsonBody: { name, isLocation, icon: "" },
     });
     if (!r.ok) throw new Error(`Create entity type failed: ${r.status} ${await safeText(r)}`);
     return (await r.json()) as HomeboxEntityType;
@@ -90,13 +206,8 @@ export class HomeboxClient {
   private async listEntitiesByType(typeId: string): Promise<Array<{ id: string; name: string; description?: string }>> {
     const results: Array<{ id: string; name: string; description?: string }> = [];
     let page = 1;
-    // Fetch all pages; server also supports filtering, but we filter client-side by entityType.id.
-    // Uses a large pageSize to minimize round-trips.
     while (true) {
-      const r = await fetch(
-        `${this.baseUrl}/api/v1/entities?page=${page}&pageSize=500`,
-        { headers: this.authHeaders() },
-      );
+      const r = await this.request("GET", `/api/v1/entities?page=${page}&pageSize=500`);
       if (!r.ok) throw new Error(`List entities failed: ${r.status}`);
       const body = await r.json();
       const items: Array<{ id: string; name: string; description?: string; entityType?: { id?: string; isLocation?: boolean } }> =
@@ -118,10 +229,8 @@ export class HomeboxClient {
 
   async createLocation(name: string, description = ""): Promise<HomeboxLocation> {
     if (!this.locationTypeId) await this.ensureEntityTypes();
-    const r = await fetch(`${this.baseUrl}/api/v1/entities`, {
-      method: "POST",
-      headers: this.authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ name, description, entityTypeId: this.locationTypeId }),
+    const r = await this.request("POST", `/api/v1/entities`, {
+      jsonBody: { name, description, entityTypeId: this.locationTypeId },
     });
     if (!r.ok) throw new Error(`Create location failed: ${r.status} ${await safeText(r)}`);
     const out = await r.json();
@@ -145,14 +254,9 @@ export class HomeboxClient {
       quantity: payload.quantity ?? 1,
     };
     if (payload.labelIds && payload.labelIds.length > 0) body.tagIds = payload.labelIds;
-    const r = await fetch(`${this.baseUrl}/api/v1/entities`, {
-      method: "POST",
-      headers: this.authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify(body),
-    });
+    const r = await this.request("POST", `/api/v1/entities`, { jsonBody: body });
     if (!r.ok) throw new Error(`Create item failed: ${r.status} ${await safeText(r)}`);
     const out = await r.json();
-    // assetId lives on Update, apply as a follow-up if requested.
     if (payload.assetId) {
       try {
         await this.updateItem(out.id, { assetId: payload.assetId });
@@ -172,8 +276,7 @@ export class HomeboxClient {
     assetId?: string;
     labelIds?: string[];
   }): Promise<void> {
-    // PUT expects the full entity shape; fetch current then merge.
-    const cur = await fetch(`${this.baseUrl}/api/v1/entities/${itemId}`, { headers: this.authHeaders() });
+    const cur = await this.request("GET", `/api/v1/entities/${itemId}`);
     if (!cur.ok) throw new Error(`Fetch entity failed: ${cur.status}`);
     const current = await cur.json();
     const body: Record<string, unknown> = {
@@ -189,7 +292,6 @@ export class HomeboxClient {
         patch.labelIds ??
         (Array.isArray(current?.tags) ? current.tags.map((t: { id: string }) => t.id) : []),
     };
-    // Strip fields the update endpoint doesn't accept.
     delete body.entityType;
     delete body.parent;
     delete body.tags;
@@ -202,16 +304,12 @@ export class HomeboxClient {
     delete body.imageId;
     delete body.thumbnailId;
 
-    const r = await fetch(`${this.baseUrl}/api/v1/entities/${itemId}`, {
-      method: "PUT",
-      headers: this.authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify(body),
-    });
+    const r = await this.request("PUT", `/api/v1/entities/${itemId}`, { jsonBody: body });
     if (!r.ok) throw new Error(`Update item failed: ${r.status} ${await safeText(r)}`);
   }
 
   async listLabels(): Promise<HomeboxLabel[]> {
-    const r = await fetch(`${this.baseUrl}/api/v1/tags`, { headers: this.authHeaders() });
+    const r = await this.request("GET", `/api/v1/tags`);
     if (!r.ok) throw new Error(`List tags failed: ${r.status}`);
     const body = await r.json();
     if (Array.isArray(body)) return body;
@@ -220,11 +318,7 @@ export class HomeboxClient {
   }
 
   async createLabel(name: string, description = ""): Promise<HomeboxLabel> {
-    const r = await fetch(`${this.baseUrl}/api/v1/tags`, {
-      method: "POST",
-      headers: this.authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ name, description }),
-    });
+    const r = await this.request("POST", `/api/v1/tags`, { jsonBody: { name, description } });
     if (!r.ok) throw new Error(`Create tag failed: ${r.status} ${await safeText(r)}`);
     return (await r.json()) as HomeboxLabel;
   }
@@ -235,11 +329,7 @@ export class HomeboxClient {
     form.append("type", type);
     form.append("name", filename);
     form.append("primary", "false");
-    const r = await fetch(`${this.baseUrl}/api/v1/entities/${itemId}/attachments`, {
-      method: "POST",
-      headers: this.authHeaders(),
-      body: form,
-    });
+    const r = await this.request("POST", `/api/v1/entities/${itemId}/attachments`, { body: form });
     if (!r.ok) throw new Error(`Upload attachment failed: ${r.status} ${await safeText(r)}`);
   }
 }
