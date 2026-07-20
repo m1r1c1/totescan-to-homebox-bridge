@@ -80,6 +80,31 @@ function App() {
     [selectedTotes],
   );
 
+  // Distinct tag values (with usage counts) rendered from the current
+  // itemTags template across ALL parsed totes' items — so users see every
+  // tag their export would produce, not just what's currently selected.
+  const distinctTags = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const tote of totes) {
+      const toteVars = {
+        toteId: tote.toteId, title: tote.title, location: tote.location,
+        profile: tote.profile, parentToteId: tote.parentToteId, dateUpdated: tote.dateUpdated,
+      };
+      for (const item of tote.items) {
+        const vars = { ...toteVars, name: item.name, itemNumber: item.itemNumber, quantity: item.quantity, description: item.description, upc: item.upc, created: item.created, updated: item.updated };
+        const rendered = mapping.itemTags ? renderTemplate(mapping.itemTags, vars) : "";
+        for (const raw of rendered.split(",")) {
+          const t = raw.trim();
+          if (!t) continue;
+          counts.set(t, (counts.get(t) ?? 0) + 1);
+        }
+      }
+    }
+    return Array.from(counts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [totes, mapping.itemTags]);
+
   async function handleFile(file: File) {
     try {
       const parsed = await parseTotescanFile(file);
